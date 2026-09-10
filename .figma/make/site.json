@@ -1,0 +1,10 @@
+{
+  "description": "Streamline content verification with an intuitive platform that ensures accuracy and authenticity for publishers and editors.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
