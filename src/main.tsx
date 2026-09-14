@@ -5,7 +5,7 @@ import './index.css'
 import { veriPressApi } from './api/veriPressApi'
 
 // One-time data reset — bumping the version below triggers a full wipe on next load.
-const RESET_VERSION = "v3";
+const RESET_VERSION = import.meta.env.VITE_RESET_VERSION ?? "v1";
 const RESET_KEY = "veripress.reset-version";
 try {
   if (window.localStorage.getItem(RESET_KEY) !== RESET_VERSION) {
