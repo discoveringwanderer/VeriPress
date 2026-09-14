@@ -1369,11 +1369,11 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
               value={body}
               onChange={e => setBody(e.target.value)}
               placeholder="Write you article here"
-              maxLength={3000}
+              maxLength={100000}
               rows={7}
               className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-700 placeholder-gray-400 resize-none"
             />
-            <p className="text-right text-[10px] text-gray-400 mt-1">{body.length}/3000</p>
+            <p className="text-right text-[10px] text-gray-400 mt-1">{body.length}/100,000</p>
           </div>
         </div>
       </div>
