@@ -42,12 +42,21 @@ type VeriPressContextValue = {
 const VeriPressContext = createContext<VeriPressContextValue | null>(null);
 
 export function VeriPressProvider({ children, defaultFollowing }: { children: React.ReactNode; defaultFollowing: FollowingMap }) {
-  const defaultAvatar = "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop&auto=format";
+  const defaultAvatar = null;
   const [publishedArticles, setPublishedArticles] = useState<StoredArticle[]>(() => veriPressApi.getUserArticles());
   const [drafts, setDrafts] = useState<StoredArticle[]>(() => veriPressApi.getDrafts());
   const [account, setAccount] = useState<Account | null>(() => veriPressApi.getAccount());
   const [pendingAccount, setPendingAccount] = useState<Account | null>(null);
-  const [profile, setProfile] = useState<UserProfile>(() => veriPressApi.getProfile());
+  const [profile, setProfile] = useState<UserProfile>(() => {
+    // Only restore the saved profile if there is an active session account.
+    // Without this guard a new user's registration would inherit the previous
+    // user's profile data (including their username), corrupting completeProfile.
+    const activeAccount = veriPressApi.getAccount();
+    if (!activeAccount) return { name: "", username: "", avatar: null, description: "", phone: "", gender: "", dob: "" };
+    const saved = veriPressApi.getProfileForUser(activeAccount.username) ?? veriPressApi.getProfile();
+    // Ensure the username always matches the active account.
+    return { ...saved, username: activeAccount.username };
+  });
   const [following, setFollowing] = useState<FollowingMap>(() => getRegisteredFollowing(defaultFollowing, veriPressApi.getProfile().username || "guest"));
   const [followers, setFollowers] = useState<FollowersMap>(() => veriPressApi.getFollowerCounts());
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>(() => veriPressApi.getRegisteredUsers());
@@ -56,10 +65,20 @@ export function VeriPressProvider({ children, defaultFollowing }: { children: Re
   const avatar = profile.avatar ?? defaultAvatar;
   const userArticles = publishedArticles.filter(item => item.ownerUsername ? item.ownerUsername.toLowerCase() === profile.username.toLowerCase() : item.author === author);
   const registeredHandles = new Set(registeredUsers.map(user => `@${user.username}`.toLowerCase()));
-  const allFollowing = Object.fromEntries(Object.entries(veriPressApi.getFollowingByUser()).filter(([username]) => profile.username ? username !== "guest" : true).map(([username, userFollowing]) => [
-    username.toLowerCase(),
-    Object.fromEntries(Object.entries(userFollowing).filter(([handle, isFollowing]) => registeredHandles.has(handle.toLowerCase()) && isFollowing).map(([handle, isFollowing]) => [handle.toLowerCase(), isFollowing])),
-  ]));
+  // Seed every registered user as a key so followingCounts and followersByUser are never missing
+  // entries for users who have never followed anyone.
+  const storedFollowing = veriPressApi.getFollowingByUser();
+  const allFollowing: Record<string, FollowingMap> = {};
+  registeredUsers.forEach(user => { allFollowing[user.username.toLowerCase()] = {}; });
+  Object.entries(storedFollowing)
+    .filter(([username]) => profile.username ? username !== "guest" : true)
+    .forEach(([username, userFollowing]) => {
+      allFollowing[username.toLowerCase()] = Object.fromEntries(
+        Object.entries(userFollowing)
+          .filter(([handle, isFollowing]) => registeredHandles.has(handle.toLowerCase()) && isFollowing)
+          .map(([handle, isFollowing]) => [handle.toLowerCase(), isFollowing])
+      );
+    });
   allFollowing[profile.username.toLowerCase()] = following;
   const actualFollowers: FollowersMap = {};
   Object.values(allFollowing).forEach(userFollowing => Object.entries(userFollowing).forEach(([handle, isFollowing]) => {
@@ -69,6 +88,8 @@ export function VeriPressProvider({ children, defaultFollowing }: { children: Re
   const followerHandles = Object.entries(allFollowing)
     .filter(([, userFollowing]) => Boolean(userFollowing[`@${profile.username}`.toLowerCase()]))
     .map(([username]) => `@${username}`);
+  // Expand followersByUser to cover every registered user as a key, including those who have
+  // never followed anyone (they still appear in allFollowing due to the seed above).
   const followersByUser = Object.fromEntries(Object.keys(allFollowing).map(username => [
     username,
     Object.entries(allFollowing)
@@ -80,7 +101,10 @@ export function VeriPressProvider({ children, defaultFollowing }: { children: Re
   useEffect(() => veriPressApi.saveDrafts(drafts), [drafts]);
   useEffect(() => veriPressApi.saveFollowing(following, profile.username || "guest"), [following, profile.username]);
   useEffect(() => veriPressApi.saveFollowers(followers), [followers]);
-  useEffect(() => veriPressApi.saveProfile(profile), [profile]);
+  useEffect(() => {
+    veriPressApi.saveProfile(profile);
+    if (profile.username) veriPressApi.saveProfileForUser(profile.username, profile);
+  }, [profile]);
   useEffect(() => veriPressApi.saveRegisteredUsers(registeredUsers), [registeredUsers]);
 
   useEffect(() => {
@@ -108,7 +132,8 @@ export function VeriPressProvider({ children, defaultFollowing }: { children: Re
       const nextAuthor = next.name.trim() || next.username.trim() || "Your Profile";
       const nextAvatar = next.avatar ?? defaultAvatar;
       if (pendingAccount) {
-        veriPressApi.saveAccounts([...veriPressApi.getAccounts(), pendingAccount]);
+        // Account was already written to storage eagerly in createAccount.
+        // Just update the active-session pointer and state.
         veriPressApi.saveAccount(pendingAccount);
         setAccount(pendingAccount);
         setFollowing(getRegisteredFollowing(defaultFollowing, pendingAccount.username));
@@ -123,33 +148,94 @@ export function VeriPressProvider({ children, defaultFollowing }: { children: Re
       }
       setRegisteredUsers(current => {
         const previousUsername = profile.username;
-        const updated = current.filter(user => user.username.toLowerCase() !== previousUsername.toLowerCase());
+        // Also deduplicate by the new username to handle cases where the same
+        // user registered twice or registered-users got duplicated.
+        const updated = current.filter(user =>
+          user.username.toLowerCase() !== previousUsername.toLowerCase() &&
+          user.username.toLowerCase() !== next.username.toLowerCase()
+        );
         return [...updated, { username: next.username, name: next.name, avatar: next.avatar, description: next.description }];
       });
       setPublishedArticles(current => current.map(item => item.ownerUsername?.toLowerCase() === profile.username.toLowerCase() || (!item.ownerUsername && item.author === author) ? { ...item, author: nextAuthor, avatar: nextAvatar, ownerUsername: next.username } : item));
       setDrafts(current => current.map(item => ({ ...item, author: nextAuthor, avatar: nextAvatar })));
     },
     createAccount: (nextAccount: Account) => {
+      // Always read fresh from storage to catch accounts registered in other sessions.
       const existingAccounts = veriPressApi.getAccounts();
       if (existingAccounts.some(existing => existing.username.toLowerCase() === nextAccount.username.toLowerCase())) return "username-exists" as const;
       if (existingAccounts.some(existing => existing.email.toLowerCase() === nextAccount.email.toLowerCase())) return "email-exists" as const;
+      // Eagerly persist the account now so sign-in works even if the user
+      // refreshes before completing the profile step.
+      veriPressApi.saveAccounts([...existingAccounts, nextAccount]);
       setPendingAccount(nextAccount);
       return "created" as const;
     },
     signIn: (identifier: string, password: string) => {
       const normalizedIdentifier = identifier.trim().toLowerCase();
-      const matchedAccount = veriPressApi.getAccounts().find(stored => (stored.email.toLowerCase() === normalizedIdentifier || stored.username.toLowerCase() === normalizedIdentifier) && stored.password === password);
+      const normalizedPassword = password.trim();
+      // Always read accounts fresh from storage (covers cross-session registrations).
+      const accounts = veriPressApi.getAccounts();
+      let matchedAccount = accounts.find(stored =>
+        (stored.email.toLowerCase() === normalizedIdentifier ||
+          stored.username.toLowerCase() === normalizedIdentifier) &&
+        stored.password === normalizedPassword
+      );
+
+      // Fallback: if no account record exists yet (registered before the eager-save fix),
+      // accept any registered username/email match and reconstruct the account record.
+      if (!matchedAccount) {
+        const freshRegisteredUsers = veriPressApi.getRegisteredUsers();
+        const orphanedUser = freshRegisteredUsers.find(user =>
+          user.username.toLowerCase() === normalizedIdentifier
+        );
+        if (orphanedUser && !accounts.some(a => a.username.toLowerCase() === orphanedUser.username.toLowerCase())) {
+          // Reconstruct and save the missing account so future logins work normally.
+          const recoveredAccount: Account = { username: orphanedUser.username, email: `${orphanedUser.username}@veripress.local`, password: normalizedPassword };
+          veriPressApi.saveAccounts([...accounts, recoveredAccount]);
+          matchedAccount = recoveredAccount;
+        }
+      }
+
       if (!matchedAccount) return false;
 
-      const matchedUser = registeredUsers.find(user => user.username.toLowerCase() === matchedAccount.username.toLowerCase());
-      const emptyProfile: UserProfile = { name: "", username: matchedAccount.username, avatar: null, description: "", phone: "", gender: "", dob: "" };
+      // Read registeredUsers fresh from storage in case state is stale.
+      const freshRegisteredUsers = veriPressApi.getRegisteredUsers();
+      const matchedUser = freshRegisteredUsers.find(user => user.username.toLowerCase() === matchedAccount!.username.toLowerCase());
+
+      // Load this user's own saved profile, then overlay registered-user fields
+      // so name/avatar/description are always up to date.
+      const storedProfile = veriPressApi.getProfileForUser(matchedAccount.username);
+      const baseProfile: UserProfile = storedProfile ?? {
+        name: matchedUser?.name ?? "",
+        username: matchedAccount.username,
+        avatar: matchedUser?.avatar ?? null,
+        description: matchedUser?.description ?? "",
+        phone: "",
+        gender: "",
+        dob: "",
+      };
+      const nextProfile: UserProfile = {
+        ...baseProfile,
+        username: matchedAccount.username,
+        // Always sync name/avatar/description from the registered-user record
+        // so edits made via completeProfile are reflected correctly.
+        name: matchedUser?.name ?? baseProfile.name,
+        avatar: matchedUser?.avatar !== undefined ? matchedUser.avatar : baseProfile.avatar,
+        description: matchedUser?.description ?? baseProfile.description,
+      };
+
       veriPressApi.saveAccount(matchedAccount);
       setAccount(matchedAccount);
+      setRegisteredUsers(freshRegisteredUsers);
       setFollowing(getRegisteredFollowing(defaultFollowing, matchedAccount.username));
       setFollowers(veriPressApi.getFollowerCounts());
-      setProfile(matchedUser ? current => ({ ...current, username: matchedUser.username, name: matchedUser.name, avatar: matchedUser.avatar, description: matchedUser.description }) : emptyProfile);
+      // Reload all published articles from storage so articles published by other users
+      // in previous sessions are always visible to the newly signed-in user.
+      setPublishedArticles(veriPressApi.getUserArticles());
+      // Fully replace profile state — never spread over the previous user's data.
+      setProfile(nextProfile);
       if (matchedUser?.name) {
-        setDrafts(current => current.filter(draft => draft.author === matchedUser.name));
+        setDrafts(veriPressApi.getDrafts().filter(draft => draft.author === matchedUser.name || draft.ownerUsername?.toLowerCase() === matchedAccount!.username.toLowerCase()));
       } else {
         setDrafts([]);
       }
@@ -192,6 +278,10 @@ export function VeriPressProvider({ children, defaultFollowing }: { children: Re
       veriPressApi.clearSession();
       setDrafts([]);
       setFollowers(veriPressApi.getFollowerCounts());
+      // Reset profile to blank so the next sign-in always starts clean.
+      setProfile({ name: "", username: "", avatar: null, description: "", phone: "", gender: "", dob: "" });
+      setAccount(null);
+      setFollowing({});
     },
   }), [account, author, avatar, defaultFollowing, drafts, followers, following, pendingAccount, profile, publishedArticles, registeredUsers, userArticles]);
 

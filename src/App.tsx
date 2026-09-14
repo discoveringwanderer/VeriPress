@@ -4,6 +4,7 @@ import { veriPressApi } from "./api/veriPressApi";
 import { VeriPressProvider } from "./context/VeriPressContext";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { useVeriPress } from "./hooks/useVeriPress";
+import LOGO_SRC from "./imports/VeriPressLogo.png";
 
 // ── Images ──────────────────────────────────────────────────────────────────
 const IMG_TRAVEL = "https://images.unsplash.com/photo-1516546453174-5e1098a4b4af?w=600&h=400&fit=crop&auto=format";
@@ -18,7 +19,6 @@ const AVATAR_4 = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80
 const AVATAR_5 = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop&auto=format";
 const AVATAR_6 = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop&auto=format";
 const AVATAR_SAM = "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop&auto=format";
-const LOGO_SRC = "/VeriPressLogo.png";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Screen =
@@ -50,42 +50,9 @@ function VeriPressLogo({ size = 48 }: { size?: number }) {
 }
 
 function StatusBar() {
-  const [currentTime, setCurrentTime] = useState(() => formatDeviceTime());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setCurrentTime(formatDeviceTime()), 30000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  return (
-    <div className="flex justify-between items-center px-5 pt-3 pb-1">
-      <span className="text-xs font-semibold text-gray-800">{currentTime}</span>
-      <div className="flex items-center gap-1">
-        <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
-          <rect x="0" y="4" width="3" height="8" rx="1" fill="#1a1a1a" />
-          <rect x="4.5" y="2.5" width="3" height="9.5" rx="1" fill="#1a1a1a" />
-          <rect x="9" y="0.5" width="3" height="11.5" rx="1" fill="#1a1a1a" />
-          <rect x="13.5" y="0" width="2.5" height="12" rx="1" fill="#1a1a1a" opacity="0.3" />
-        </svg>
-        <svg width="16" height="12" viewBox="0 0 20 14" fill="none">
-          <path d="M10 3C7 3 4.5 4 2.5 5.8L0.5 3.8C3 1.4 6.3 0 10 0s7 1.4 9.5 3.8l-2 2C15.5 4 12.8 3 10 3z" fill="#1a1a1a" />
-          <path d="M10 7c-1.8 0-3.3.6-4.5 1.6L3.5 6.6C5.2 5 7.5 4 10 4s4.8 1 6.5 2.6l-2 2C13.3 7.6 11.8 7 10 7z" fill="#1a1a1a" />
-          <circle cx="10" cy="12" r="2" fill="#1a1a1a" />
-        </svg>
-        <div className="flex items-center gap-0.5">
-          <div className="w-6 h-3 border border-gray-700 rounded-sm flex items-center px-0.5">
-            <div className="w-4 h-2 bg-gray-800 rounded-sm" />
-          </div>
-          <div className="w-0.5 h-1.5 bg-gray-500 rounded-full ml-0.5" />
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="h-8 flex-shrink-0" />;
 }
 
-function formatDeviceTime() {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date());
-}
 
 function readProfileImage(file: File, onLoad: (image: string) => void) {
   const reader = new FileReader();
@@ -174,13 +141,13 @@ function ArticleCard({
     <div className="text-left w-full">
       <button onClick={onPress} className="block text-left w-full">
         <div className="rounded-xl overflow-hidden mb-2 w-full aspect-[16/10] bg-gray-200">
-        <img src={image} alt={title} className="w-full h-full object-cover" />
+          <ArticleImage src={image} alt={title} className="w-full h-full object-cover" />
         </div>
         <p className="font-semibold text-gray-900 text-sm leading-snug mb-1">{title}</p>
       </button>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <img src={avatar} alt={author} className="w-5 h-5 rounded-full object-cover" />
+          <PersonAvatar src={avatar} name={author} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
           <button onClick={onAuthor} className="text-xs text-gray-500">{author}</button>
           <span className="text-gray-300 text-xs">·</span>
           <span className="text-xs text-gray-400">{time}</span>
@@ -209,12 +176,12 @@ function ArticleListItem({
     <div className="flex gap-3 w-full text-left py-3 border-b border-gray-100">
       <button onClick={onPress} className="flex gap-3 flex-1 min-w-0 text-left">
       <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-gray-200">
-        <img src={image} alt={title} className="w-full h-full object-cover" />
+        <ArticleImage src={image} alt={title} className="w-full h-full object-cover" />
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-semibold text-gray-900 text-sm leading-snug mb-1 line-clamp-2">{title}</p>
         <div className="flex items-center gap-1.5">
-          <img src={avatar} alt={author} className="w-4 h-4 rounded-full object-cover" />
+          <PersonAvatar src={avatar} name={author} className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
           <span className="text-xs text-gray-500">{author}</span>
           <span className="text-gray-300 text-xs">·</span>
           <span className="text-xs text-gray-400">{time}</span>
@@ -419,11 +386,10 @@ function AuthOptionsScreen({ onSignIn, onSignUp }: { onSignIn: () => void; onSig
   );
 }
 
-function SignInScreen({ onBack, onSignIn, onForgot, onRememberEmail }: { onBack: () => void; onSignIn: (identifier: string, password: string) => boolean; onForgot: () => void; onRememberEmail: (email: string) => void }) {
-  const [email, setEmail] = useState(() => veriPressApi.getRememberedEmail());
+function SignInScreen({ onBack, onSignIn }: { onBack: () => void; onSignIn: (identifier: string, password: string) => boolean }) {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
-  const [remember, setRemember] = useState(false);
   const [error, setError] = useState("");
 
   function submit() {
@@ -432,7 +398,6 @@ function SignInScreen({ onBack, onSignIn, onForgot, onRememberEmail }: { onBack:
     } else if (!onSignIn(email, password)) {
       setError("This account was not recognized. Check your credentials or sign up first.");
     } else {
-      onRememberEmail(remember ? email.trim() : "");
       setError("");
     }
   }
@@ -467,20 +432,6 @@ function SignInScreen({ onBack, onSignIn, onForgot, onRememberEmail }: { onBack:
           }
         />
 
-        <div className="flex items-center gap-2 mb-2">
-          <button
-            onClick={() => setRemember(!remember)}
-            className="w-5 h-5 rounded flex items-center justify-center transition-colors"
-            style={{ background: remember ? "#1B2B6B" : "white", border: remember ? "none" : "2px solid #d1d5db" }}
-          >
-            {remember && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-          </button>
-          <span className="text-sm text-gray-700">Remember me</span>
-        </div>
-
-        <button onClick={onForgot} className="text-center w-full mt-4 mb-6 text-sm font-medium" style={{ color: "#1B2B6B" }}>
-          Forgot Password
-        </button>
         {error && <p className="text-center text-sm text-red-500 mb-4">{error}</p>}
       </div>
       <div className="px-6 pb-10">
@@ -491,7 +442,6 @@ function SignInScreen({ onBack, onSignIn, onForgot, onRememberEmail }: { onBack:
 }
 
 function CreateAccountScreen({ draft, onDraftChange, onBack, onContinue }: { draft: AccountDraft; onDraftChange: (draft: AccountDraft) => void; onBack: () => void; onContinue: (account: { username: string; email: string; password: string }) => "created" | "username-exists" | "email-exists" | "account-exists" }) {
-  const [remember, setRemember] = useState(false);
   const [showP, setShowP] = useState(false);
   const [showC, setShowC] = useState(false);
   const [error, setError] = useState("");
@@ -545,16 +495,6 @@ function CreateAccountScreen({ draft, onDraftChange, onBack, onContinue }: { dra
           }
         />
 
-        <div className="flex items-center gap-2 mb-6">
-          <button
-            onClick={() => setRemember(!remember)}
-            className="w-5 h-5 rounded flex items-center justify-center"
-            style={{ background: remember ? "#1B2B6B" : "white", border: remember ? "none" : "2px solid #d1d5db" }}
-          >
-            {remember && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-          </button>
-          <span className="text-sm text-gray-700">Remember me</span>
-        </div>
         {error && <p className="text-sm text-red-500 mb-4">{error}</p>}
       </div>
       <div className="px-6 pb-10">
@@ -569,7 +509,7 @@ function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { d
   const fileRef = useRef<HTMLInputElement>(null);
 
   function submit() {
-    if (!draft.name.trim() || !draft.phone.trim() || !draft.gender.trim() || !draft.dob.trim() || !draft.description.trim()) {
+    if (!draft.name.trim() || !draft.phone.trim() || !draft.gender.trim() || !draft.dob.trim()) {
       setError("Complete all profile fields before continuing.");
       return;
     }
@@ -599,7 +539,7 @@ function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { d
         <div className="flex justify-center mb-6">
           <div className="relative">
             <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-200">
-              {draft.avatar && <img src={draft.avatar} alt="Profile" className="w-full h-full object-cover" />}
+              <PersonAvatar src={draft.avatar} name="Profile" className="w-full h-full object-cover" />
             </div>
             <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "#1B2B6B" }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -659,11 +599,26 @@ function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { d
 type Person = { name: string; handle: string; avatar: string | null; following: boolean };
 
 function PersonAvatar({ src, name, className }: { src: string | null; name: string; className: string }) {
-  return src ? <img src={src} alt={name} className={className} /> : (
-    <div aria-label={`${name} has no profile picture`} className={`${className} bg-gray-100 flex items-center justify-center`}>
-      <svg width="55%" height="55%" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="12" cy="8" r="3.5" fill="#cbd5e1" />
-        <path d="M4.5 20c.8-3.7 3.2-5.5 7.5-5.5s6.7 1.8 7.5 5.5" fill="#cbd5e1" />
+  if (src) return <img src={src} alt={name} className={className} />;
+  return (
+    <div className={`${className} flex-shrink-0 flex items-center justify-center overflow-hidden`} style={{ background: "#d1d5db" }} aria-label={name}>
+      <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", height: "100%" }}>
+        <circle cx="50" cy="38" r="22" fill="#9ca3af" />
+        <ellipse cx="50" cy="92" rx="34" ry="26" fill="#9ca3af" />
+      </svg>
+    </div>
+  );
+}
+
+// Renders an article cover image, or a grey landscape placeholder when no image is set.
+function ArticleImage({ src, alt, className }: { src: string | null | undefined; alt: string; className: string }) {
+  if (src) return <img src={src} alt={alt} className={className} />;
+  return (
+    <div className={`${className} flex items-center justify-center`} style={{ background: "#d1d5db" }}>
+      <svg viewBox="0 0 80 60" fill="none" xmlns="http://www.w3.org/2000/svg" width="50%" height="50%">
+        <rect x="4" y="4" width="72" height="52" rx="6" stroke="white" strokeWidth="4" fill="none" />
+        <circle cx="22" cy="22" r="7" fill="white" />
+        <path d="M4 44l18-16 14 14 10-10 18 14" stroke="white" strokeWidth="4" strokeLinejoin="round" fill="none" />
       </svg>
     </div>
   );
@@ -712,7 +667,7 @@ function DiscoverPeopleScreen({ people, onBack, onFinish, following, onToggleFol
 
         {people.map(p => (
           <div key={p.handle} className="flex items-center gap-3 py-3 border-b border-gray-100">
-            <img src={p.avatar} alt={p.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+            <PersonAvatar src={p.avatar} name={p.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <button onClick={() => onViewProfile(p)} className="font-semibold text-gray-900 text-sm text-left">{p.name}</button>
               <p className="text-gray-400 text-xs">{p.handle}</p>
@@ -944,7 +899,7 @@ function DiscoverListScreen({ kind, onBack, onArticle, onAuthor }: { kind: "popu
           <div className="space-y-1">
             {TOP_WRITERS.map(writer => (
               <button key={writer.name} onClick={() => onAuthor(writer.name)} className="flex items-center gap-3 w-full py-3 border-b border-gray-100 text-left">
-                <img src={writer.avatar} alt={writer.name} className="w-12 h-12 rounded-full object-cover" />
+                <PersonAvatar src={writer.avatar} name={writer.name} className="w-12 h-12 rounded-full object-cover" />
                 <span className="font-semibold text-sm text-gray-900">{writer.name}</span>
               </button>
             ))}
@@ -1061,7 +1016,7 @@ function getFollowedPeople(following: Record<string, boolean>, registeredUsers: 
     });
 }
 
-function ProfileScreen({ onNavigate, onEdit, onEditArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => void; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void }) {
+function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => void; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void }) {
   const followedPeople = getFollowedPeople(following, registeredUsers);
   const followingCount = Object.values(following).filter(Boolean).length;
   const selfHandle = profile.username ? `@${profile.username}` : "";
@@ -1133,7 +1088,7 @@ function ProfileScreen({ onNavigate, onEdit, onEditArticle, userArticles, onLogo
               <p className="text-gray-400 text-xs mt-1">Publish your first article to build your profile.</p>
             </div>
           ) : userArticles.map(a => (
-            <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onEdit={() => onEditArticle(a)} />
+            <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onPress={() => onNavigate("profile-articles")} onEdit={() => onEditArticle(a)} onDelete={() => onDeleteArticle(a)} />
           ))}
         </div>
       </div>
@@ -1276,7 +1231,7 @@ function EditProfileScreen({ profile, onBack, onSave }: { profile: UserProfile; 
         <div className="flex justify-center mb-6">
           <div className="relative">
             <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-200">
-              {avatar && <img src={avatar} alt={name || "Profile"} className="w-full h-full object-cover" />}
+              <PersonAvatar src={avatar} name={name || "Profile"} className="w-full h-full object-cover" />
             </div>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={event => {
               const file = event.target.files?.[0];
@@ -1315,14 +1270,13 @@ function EditProfileScreen({ profile, onBack, onSave }: { profile: UserProfile; 
 function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSaveDraft }: { article?: Article; isDraft?: boolean; onBack: () => void; onPublish: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => void; onSaveDraft: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => void }) {
   const [title, setTitle] = useState(article?.title ?? "");
   const [body, setBody] = useState(article?.body ?? "");
-  const [date, setDate] = useState("");
   const [coverImage, setCoverImage] = useState<string | null>(article?.image ?? null);
   const [showDelete, setShowDelete] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const filled = Boolean(title.trim() && body.trim());
-  const draft = { title, body, category: "My Story", image: coverImage ?? IMG_WRITING };
+  const draft = { title, body, category: "My Story", image: coverImage ?? "" };
 
   function saveDraft() {
     if (!filled) return;
@@ -1355,19 +1309,38 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
       <div className="flex-1 overflow-y-auto">
         {/* Cover image area */}
         <div
-          className="mx-4 mt-4 rounded-2xl overflow-hidden bg-gray-100 cursor-pointer flex items-center justify-center"
-          style={{ height: 160 }}
-          onClick={() => fileRef.current?.click()}
+          className="mx-4 mt-4 rounded-2xl overflow-hidden flex items-center justify-center relative"
+          style={{ height: 160, background: coverImage ? "#ffffff" : "#d1d5db" }}
         >
           {coverImage ? (
-            <img src={coverImage} alt="Cover" className="w-full h-full object-cover" />
+            <>
+              <img src={coverImage} alt="Cover" className="w-full h-full object-cover" />
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="absolute bottom-2 right-2 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold"
+                style={{ background: "rgba(0,0,0,0.5)", color: "white" }}
+                aria-label="Change cover image"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4z" />
+                </svg>
+                Change
+              </button>
+            </>
           ) : (
-            <div className="flex flex-col items-center gap-2 text-gray-400">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
-              </svg>
-              <span className="text-xs text-gray-400">Add Article Cover Image</span>
-            </div>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="flex flex-col items-center gap-1.5"
+              aria-label="Add cover image"
+            >
+              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "#1B2B6B" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </div>
+              <span className="text-xs font-semibold text-white">Add cover</span>
+            </button>
           )}
         </div>
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => {
@@ -1402,22 +1375,11 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
             />
             <p className="text-right text-[10px] text-gray-400 mt-1">{body.length}/3000</p>
           </div>
-          <div className="mb-4">
-            <label className="block text-sm font-semibold text-gray-900 mb-1">Select Publication Date</label>
-            <div className="flex items-center justify-between border border-gray-200 rounded-xl px-3 py-2.5">
-              <input
-                type="date"
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                className="flex-1 text-sm text-gray-700 placeholder-gray-400 bg-transparent"
-              />
-            </div>
-          </div>
         </div>
       </div>
 
       <div className="px-4 pb-10 pt-2">
-        <PrimaryButton label="Publish" onClick={() => onPublish({ title, body, category: "My Story", image: coverImage ?? IMG_WRITING }, article?.id)} disabled={!filled} />
+        <PrimaryButton label="Publish" onClick={() => onPublish({ title, body, category: "My Story", image: coverImage ?? "" }, article?.id)} disabled={!filled} />
       </div>
 
       {/* Delete modal */}
@@ -1449,7 +1411,7 @@ function ArticleDetailScreen({ articleId, articles, onBack, following, onToggleF
       <div className="flex-1 overflow-y-auto">
         {/* Cover */}
         <div className="h-52 bg-gray-200 overflow-hidden">
-          <img src={article.image} alt={article.title} className="w-full h-full object-cover" />
+          <ArticleImage src={article.image} alt={article.title} className="w-full h-full object-cover" />
         </div>
 
         <div className="px-4 pt-5 pb-10">
@@ -1457,7 +1419,7 @@ function ArticleDetailScreen({ articleId, articles, onBack, following, onToggleF
 
           {/* Author row */}
           <div className="flex items-center gap-3 mb-5">
-            <img src={article.avatar} alt={article.author} className="w-10 h-10 rounded-full object-cover" />
+            <PersonAvatar src={article.avatar} name={article.author} className="w-10 h-10 rounded-full object-cover" />
             <div className="flex-1">
               <p className="font-semibold text-gray-900 text-sm">{article.author}</p>
               <p className="text-gray-400 text-xs">Published · {article.time}</p>
@@ -1515,21 +1477,50 @@ function AppContent() {
   }
 
   function openPublicProfile(name: string) {
-    const article = ARTICLES.find(item => item.author === name);
-    const userArticle = publishedArticles.find(item => item.author === name);
-    const registered = registeredPeople.find(person => person.name === name || person.handle === name);
-    const suggested = SUGGESTED_PEOPLE.find(person => person.name === name || person.handle === name);
-    if (registered) {
-      setProfilePerson(registered);
-    } else if (suggested) {
-      setProfilePerson(suggested);
-    } else if (article || userArticle) {
-      const source = article ?? userArticle!;
-      setProfilePerson({ name: source.author, handle: `@${source.author.toLowerCase().replaceAll(" ", "_")}`, avatar: source.avatar, following: false });
-    } else {
+    // First try to find a registered user whose username or display name matches — this gives
+    // us the canonical username so the article filter and follow lookup are always correct.
+    const registeredMatch = registeredUsers.find(
+      user =>
+        user.username.toLowerCase() === name.toLowerCase() ||
+        (user.name && user.name.toLowerCase() === name.toLowerCase()) ||
+        `@${user.username}`.toLowerCase() === name.toLowerCase()
+    );
+    if (registeredMatch) {
+      setProfilePerson({
+        name: registeredMatch.name || registeredMatch.username,
+        handle: `@${registeredMatch.username}`,
+        avatar: registeredMatch.avatar,
+        following: Boolean(following[`@${registeredMatch.username}`.toLowerCase()]),
+      });
+      goTo("public-profile");
       return;
     }
-    goTo("public-profile");
+
+    // Fall back to SUGGESTED_PEOPLE for non-registered handles shown during onboarding.
+    const suggested = SUGGESTED_PEOPLE.find(person => person.name === name || person.handle === name);
+    if (suggested) {
+      setProfilePerson(suggested);
+      goTo("public-profile");
+      return;
+    }
+
+    // Last resort: derive handle from a matching article's ownerUsername (most accurate)
+    // or from the author display name string.
+    const userArticle = publishedArticles.find(item => item.author === name || item.ownerUsername === name);
+    const staticArticle = ARTICLES.find(item => item.author === name);
+    const source = userArticle ?? staticArticle;
+    if (source) {
+      const handle = source.ownerUsername
+        ? `@${source.ownerUsername}`
+        : `@${source.author.toLowerCase().replaceAll(" ", "_")}`;
+      setProfilePerson({
+        name: source.author,
+        handle,
+        avatar: source.avatar,
+        following: Boolean(following[handle.toLowerCase()]),
+      });
+      goTo("public-profile");
+    }
   }
 
   const renderScreen = () => {
@@ -1541,7 +1532,7 @@ function AppContent() {
       case "auth-options":
         return <AuthOptionsScreen onSignIn={() => goTo("sign-in")} onSignUp={() => goTo("create-account")} />;
       case "sign-in":
-        return <SignInScreen onBack={goBack} onSignIn={(identifier, password) => { const valid = signIn(identifier, password); if (valid) replace("home"); return valid; }} onRememberEmail={email => veriPressApi.saveRememberedEmail(email)} onForgot={() => {}} />;
+        return <SignInScreen onBack={goBack} onSignIn={(identifier, password) => { const valid = signIn(identifier, password); if (valid) replace("home"); return valid; }} />;
       case "create-account":
         return <CreateAccountScreen draft={accountDraft} onDraftChange={setAccountDraft} onBack={() => { setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goBack(); }} onContinue={account => { const result = createAccount(account); if (result === "created") goTo("complete-profile"); return result; }} />;
       case "complete-profile":
@@ -1567,7 +1558,7 @@ function AppContent() {
       case "my-articles":
         return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); replace("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); replace("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} />;
       case "profile":
-        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} userArticles={userArticles} onLogout={() => { logout(); replace("auth-options"); }} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.name)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
+        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={() => { logout(); replace("auth-options"); }} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.name)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
       case "edit-profile":
         return <EditProfileScreen profile={profile} onBack={goBack} onSave={completeProfile} />;
       case "create-article":

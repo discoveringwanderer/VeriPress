@@ -163,8 +163,40 @@ export const veriPressApi = {
     writeStorage(PROFILE_KEY, profile);
   },
 
+  // Per-user profile storage — each username gets its own slot so switching
+  // accounts always loads the correct profile data.
+  getProfileForUser(username: string): UserProfile | null {
+    if (!username) return null;
+    const key = `${PROFILE_KEY}.${username.toLowerCase()}`;
+    const stored = readStorage<Partial<UserProfile> | null>(key, null);
+    if (!stored) return null;
+    const fallback: UserProfile = { name: "", username, avatar: null, description: "", phone: "", gender: "", dob: "" };
+    return { ...fallback, ...stored };
+  },
+
+  saveProfileForUser(username: string, profile: UserProfile) {
+    if (!username) return;
+    writeStorage(`${PROFILE_KEY}.${username.toLowerCase()}`, profile);
+  },
+
   clearSession() {
     window.localStorage.removeItem(DRAFTS_KEY);
+    window.localStorage.removeItem(PROFILE_KEY);
+    window.localStorage.removeItem(ACCOUNT_KEY);
+  },
+
+  // Wipes every veripress.* key from localStorage. Used for factory-reset.
+  nukeAllData() {
+    try {
+      const keys: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("veripress.")) keys.push(k);
+      }
+      keys.forEach(k => window.localStorage.removeItem(k));
+    } catch {
+      // Storage unavailable — nothing to clear.
+    }
   },
 };
 
