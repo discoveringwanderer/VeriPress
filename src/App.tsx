@@ -1438,7 +1438,7 @@ function ArticleDetailScreen({ articleId, articles, onBack, following, onToggleF
 
           {/* Body */}
           {article.body.split("\n\n").map((p, i) => (
-            <p key={i} className="text-gray-700 text-sm leading-relaxed mb-4">{p}</p>
+            <p key={i} className="text-gray-700 text-sm leading-relaxed mb-4 text-justify">{p}</p>
           ))}
         </div>
       </div>
