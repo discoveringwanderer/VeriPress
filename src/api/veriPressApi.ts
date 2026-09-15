@@ -80,21 +80,21 @@ export async function renameAccountUsername(
 
 export async function getProfileForUser(username: string): Promise<UserProfile | null> {
   if (!username) return null;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .select("*")
     .ilike("username", username)
-    .limit(1)
-    .single();
-  if (!data) return null;
+    .limit(1);
+  if (error || !data || data.length === 0) return null;
+  const row = data[0];
   return {
-    username: data.username,
-    name: data.name ?? "",
-    avatar: data.avatar ?? null,
-    description: data.description ?? "",
-    phone: data.phone ?? "",
-    gender: data.gender ?? "",
-    dob: data.dob ?? "",
+    username: row.username,
+    name: row.name ?? "",
+    avatar: row.avatar ?? null,
+    description: row.description ?? "",
+    phone: row.phone ?? "",
+    gender: row.gender ?? "",
+    dob: row.dob ?? "",
   };
 }
 
