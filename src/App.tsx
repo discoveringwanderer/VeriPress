@@ -1231,6 +1231,19 @@ function EditProfileScreen({ profile, account, onBack, onSave }: { profile: User
   const [dob, setDob] = useState(profile.dob ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Re-sync all fields if profile loads after this screen mounts
+  useEffect(() => {
+    setName(profile.name);
+    setUsername(profile.username);
+    setAvatar(profile.avatar);
+    setDesc(profile.description);
+    setDob(profile.dob ?? "");
+  }, [profile.name, profile.username, profile.avatar, profile.description, profile.dob]);
+
+  useEffect(() => {
+    if (account?.email) setEmail(account.email);
+  }, [account?.email]);
+
   return (
     <div className="flex flex-col h-full bg-white">
       <StatusBar />
