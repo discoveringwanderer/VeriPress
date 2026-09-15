@@ -1108,7 +1108,10 @@ function ConnectionsScreen({ type, onBack, following, followers, profile, regist
   const followedPeople = getFollowedPeople(following, registeredUsers);
   const followerPeople = followerHandles.map(handle => {
     const user = registeredUsers.find(item => `@${item.username}`.toLowerCase() === handle.toLowerCase());
-    return user ? { name: user.name || user.username, handle, avatar: user.avatar, following: Boolean(following[handle]) } : null;
+    if (user) return { name: user.name || user.username, handle, avatar: user.avatar, following: Boolean(following[handle]) };
+    const rawUsername = handle.replace(/^@/, "");
+    if (!rawUsername) return null;
+    return { name: rawUsername, handle, avatar: null, following: Boolean(following[handle]) };
   }).filter((person): person is Person => person !== null);
   const count = type === "following" ? followedPeople.length : 0;
 
@@ -1498,7 +1501,13 @@ function AppContent() {
   function peopleForHandles(handles: string[]) {
     return handles.map(handle => {
       const user = registeredUsers.find(item => `@${item.username}`.toLowerCase() === handle.toLowerCase());
-      return user ? { name: user.name || user.username, handle: `@${user.username}`, avatar: user.avatar, following: Boolean(following[handle.toLowerCase()]) } : null;
+      if (user) {
+        return { name: user.name || user.username, handle: `@${user.username}`, avatar: user.avatar, following: Boolean(following[handle.toLowerCase()]) };
+      }
+      // Fallback — user exists in accounts but not yet in profiles (incomplete profile)
+      const rawUsername = handle.replace(/^@/, "");
+      if (!rawUsername) return null;
+      return { name: rawUsername, handle, avatar: null, following: Boolean(following[handle.toLowerCase()]) };
     }).filter((person): person is Person => person !== null);
   }
 
