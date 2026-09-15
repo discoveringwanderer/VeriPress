@@ -1554,7 +1554,14 @@ function AppContent() {
     }
   }
 
+  const PROTECTED: Screen[] = ["home", "discover", "create-article", "my-articles", "profile", "edit-profile", "article-detail", "public-profile", "popular-articles", "top-writers", "new-articles", "following-list", "followers-list", "profile-articles"];
+
   const renderScreen = () => {
+    // Always bounce unauthenticated users away from protected screens
+    if (!profile.username && PROTECTED.includes(screen)) {
+      return <AuthOptionsScreen onSignIn={() => replace("sign-in")} onSignUp={() => replace("create-account")} />;
+    }
+
     switch (screen) {
       case "splash":
         return <SplashScreen onNext={() => goTo("onboarding")} />;

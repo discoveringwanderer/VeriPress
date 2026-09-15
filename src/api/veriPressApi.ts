@@ -47,13 +47,13 @@ export async function saveAccount(account: Account): Promise<void> {
 
 export async function getAccountByIdentifier(identifier: string): Promise<Account | null> {
   const lower = identifier.trim().toLowerCase();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("accounts")
     .select("username, email, password")
     .or(`email.ilike.${lower},username.ilike.${lower}`)
-    .limit(1)
-    .single();
-  return data as Account | null;
+    .limit(1);
+  if (error || !data || data.length === 0) return null;
+  return data[0] as Account;
 }
 
 export async function renameAccountUsername(
