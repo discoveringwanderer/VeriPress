@@ -219,15 +219,36 @@ export async function getFollowerCounts(): Promise<FollowersMap> {
 // ── Registered Users ─────────────────────────────────────────────────────────
 
 export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
-  const { data } = await supabase
-    .from("profiles")
-    .select("username, name, avatar, description");
-  return (data ?? []).map((row) => ({
-    username: row.username,
-    name: row.name ?? "",
-    avatar: row.avatar ?? null,
-    description: row.description ?? "",
-  }));
+  // Merge accounts + profiles so every registered user appears,
+  // even those who haven't completed their profile yet.
+  const [profilesRes, accountsRes] = await Promise.all([
+    supabase.from("profiles").select("username, name, avatar, description"),
+    supabase.from("accounts").select("username"),
+  ]);
+
+  const profileMap = new Map<string, RegisteredUser>();
+  (profilesRes.data ?? []).forEach((row) => {
+    profileMap.set(row.username.toLowerCase(), {
+      username: row.username,
+      name: row.name ?? "",
+      avatar: row.avatar ?? null,
+      description: row.description ?? "",
+    });
+  });
+
+  // Add any account that doesn't yet have a profile row
+  (accountsRes.data ?? []).forEach((row) => {
+    if (!profileMap.has(row.username.toLowerCase())) {
+      profileMap.set(row.username.toLowerCase(), {
+        username: row.username,
+        name: "",
+        avatar: null,
+        description: "",
+      });
+    }
+  });
+
+  return Array.from(profileMap.values());
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

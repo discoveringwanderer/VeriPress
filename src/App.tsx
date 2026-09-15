@@ -824,7 +824,7 @@ function DiscoverScreen({ onNavigate, onOpenList, onArticle, onAuthor, published
                       <p className="text-xs font-semibold text-gray-500 mb-2">Writers</p>
                       <div className="space-y-1">
                         {searchableWriters.map(writer => (
-                          <button key={"handle" in writer ? writer.handle : writer.name} onClick={() => onAuthor(writer.name)} className="flex items-center gap-3 w-full py-2 text-left">
+                          <button key={"handle" in writer ? writer.handle : writer.name} onClick={() => onAuthor(writer.handle)} className="flex items-center gap-3 w-full py-2 text-left">
                             <PersonAvatar src={writer.avatar} name={writer.name} className="w-10 h-10 rounded-full object-cover" />
                             <span className="font-semibold text-sm text-gray-900">{writer.name}</span>
                             {"handle" in writer && <span className="text-xs text-gray-400">{writer.handle}</span>}
