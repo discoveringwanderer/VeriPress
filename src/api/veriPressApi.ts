@@ -181,21 +181,29 @@ export async function getFollowingByUser(): Promise<Record<string, FollowingMap>
 }
 
 export async function followUser(followerUsername: string, followingUsername: string): Promise<void> {
+  const follower = followerUsername.trim();
+  const following = followingUsername.replace(/^@/, "").trim();
+  // Resolve exact-case usernames from accounts to satisfy the foreign key
+  const { data: accounts } = await supabase
+    .from("accounts")
+    .select("username")
+    .or(`username.ilike.${follower},username.ilike.${following}`);
+  const exactFollower = accounts?.find(a => a.username.toLowerCase() === follower.toLowerCase())?.username ?? follower;
+  const exactFollowing = accounts?.find(a => a.username.toLowerCase() === following.toLowerCase())?.username ?? following;
   await supabase.from("following").upsert(
-    {
-      follower_username: followerUsername.toLowerCase(),
-      following_username: followingUsername.replace(/^@/, "").toLowerCase(),
-    },
+    { follower_username: exactFollower, following_username: exactFollowing },
     { onConflict: "follower_username,following_username" }
   );
 }
 
 export async function unfollowUser(followerUsername: string, followingUsername: string): Promise<void> {
+  const follower = followerUsername.trim();
+  const following = followingUsername.replace(/^@/, "").trim();
   await supabase
     .from("following")
     .delete()
-    .ilike("follower_username", followerUsername)
-    .ilike("following_username", followingUsername.replace(/^@/, ""));
+    .ilike("follower_username", follower)
+    .ilike("following_username", following);
 }
 
 export async function getFollowerCounts(): Promise<FollowersMap> {

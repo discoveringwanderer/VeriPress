@@ -366,8 +366,9 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     if (!profile.username) return;
     if (handle.toLowerCase() === `@${profile.username.toLowerCase()}`) return;
 
-    const knownHandles = new Set(registeredUsers.map((u) => `@${u.username}`.toLowerCase()));
-    if (!knownHandles.has(handle.toLowerCase())) return;
+    // Strip @ to get raw username for Supabase
+    const targetUsername = handle.replace(/^@/, "");
+    if (!targetUsername) return;
 
     const isFollowing = Boolean(following[handle.toLowerCase()]);
     if (isFollowing) {
@@ -384,7 +385,7 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     setFollowing(newFollowing);
     setFollowingByUser(newFollowingByUser);
     setFollowers(newFollowers);
-  }, [profile.username, following, registeredUsers]);
+  }, [profile.username, following]);
 
   const logout = useCallback(() => {
     window.localStorage.removeItem(sessionKey);
