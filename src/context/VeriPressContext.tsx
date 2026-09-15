@@ -1,18 +1,36 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Account, FollowersMap, FollowingMap, RegisteredUser, StoredArticle, UserProfile, veriPressApi } from "../api/veriPressApi";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import * as api from "../api/veriPressApi";
+import type {
+  Account,
+  FollowersMap,
+  FollowingMap,
+  RegisteredUser,
+  StoredArticle,
+  UserProfile,
+} from "../api/veriPressApi";
+
+// ── re-export types so existing imports keep working ─────────────────────────
+export type { Account, FollowersMap, FollowingMap, RegisteredUser, StoredArticle, UserProfile };
 
 function formatContentTime(prefix: string) {
-  const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date());
-  return `${prefix} at ${time}`;
+  return `${prefix} at ${new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date())}`;
 }
 
-function getRegisteredFollowing(defaultFollowing: FollowingMap, username: string) {
-  const registeredHandles = new Set(veriPressApi.getRegisteredUsers().map(user => `@${user.username}`.toLowerCase()));
-  const storedFollowing = veriPressApi.getFollowing(defaultFollowing, username);
-  return Object.fromEntries(Object.entries(storedFollowing).filter(([handle, isFollowing]) => registeredHandles.has(handle.toLowerCase()) && isFollowing).map(([handle, isFollowing]) => [handle.toLowerCase(), isFollowing]));
-}
+const BLANK_PROFILE: UserProfile = {
+  name: "",
+  username: "",
+  avatar: null,
+  description: "",
+  phone: "",
+  gender: "",
+  dob: "",
+};
 
 type VeriPressContextValue = {
+  // data
   userArticles: StoredArticle[];
   publishedArticles: StoredArticle[];
   drafts: StoredArticle[];
@@ -22,270 +40,422 @@ type VeriPressContextValue = {
   followingByUser: Record<string, FollowingMap>;
   followersByUser: Record<string, string[]>;
   followers: FollowersMap;
-  publishArticle: (article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">, id?: string) => void;
-  saveDraft: (article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">, id?: string) => void;
-  updateDraft: (id: string, article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">) => void;
-  updatePublished: (id: string, article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">) => void;
-  deleteDraft: (id: string) => void;
-  deletePublished: (id: string) => void;
-  toggleFollowing: (handle: string) => void;
-  logout: () => void;
-  account: Account | null;
-  createAccount: (account: Account) => "created" | "username-exists" | "email-exists" | "account-exists";
-  signIn: (identifier: string, password: string) => boolean;
-  validateCredentials: (identifier: string, password: string) => boolean;
-  completeProfile: (profile: Partial<UserProfile>) => void;
   profile: UserProfile;
   registeredUsers: RegisteredUser[];
+  account: Account | null;
+  loading: boolean;
+  // actions
+  publishArticle: (
+    article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">,
+    id?: string
+  ) => Promise<void>;
+  saveDraft: (
+    article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">,
+    id?: string
+  ) => Promise<void>;
+  updateDraft: (
+    id: string,
+    article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">
+  ) => Promise<void>;
+  updatePublished: (
+    id: string,
+    article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">
+  ) => Promise<void>;
+  deleteDraft: (id: string) => Promise<void>;
+  deletePublished: (id: string) => Promise<void>;
+  toggleFollowing: (handle: string) => Promise<void>;
+  logout: () => void;
+  createAccount: (
+    account: Account
+  ) => Promise<"created" | "username-exists" | "email-exists">;
+  signIn: (identifier: string, password: string) => Promise<boolean>;
+  completeProfile: (profile: Partial<UserProfile>) => Promise<void>;
+  validateCredentials: (identifier: string, password: string) => Promise<boolean>;
 };
 
 const VeriPressContext = createContext<VeriPressContextValue | null>(null);
 
-export function VeriPressProvider({ children, defaultFollowing }: { children: React.ReactNode; defaultFollowing: FollowingMap }) {
-  const defaultAvatar = null;
-  const [publishedArticles, setPublishedArticles] = useState<StoredArticle[]>(() => veriPressApi.getUserArticles());
-  const [drafts, setDrafts] = useState<StoredArticle[]>(() => veriPressApi.getDrafts());
-  const [account, setAccount] = useState<Account | null>(() => veriPressApi.getAccount());
-  const [pendingAccount, setPendingAccount] = useState<Account | null>(null);
-  const [profile, setProfile] = useState<UserProfile>(() => {
-    // Only restore the saved profile if there is an active session account.
-    // Without this guard a new user's registration would inherit the previous
-    // user's profile data (including their username), corrupting completeProfile.
-    const activeAccount = veriPressApi.getAccount();
-    if (!activeAccount) return { name: "", username: "", avatar: null, description: "", phone: "", gender: "", dob: "" };
-    const saved = veriPressApi.getProfileForUser(activeAccount.username) ?? veriPressApi.getProfile();
-    // Ensure the username always matches the active account.
-    return { ...saved, username: activeAccount.username };
-  });
-  const [following, setFollowing] = useState<FollowingMap>(() => getRegisteredFollowing(defaultFollowing, veriPressApi.getProfile().username || "guest"));
-  const [followers, setFollowers] = useState<FollowersMap>(() => veriPressApi.getFollowerCounts());
-  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>(() => veriPressApi.getRegisteredUsers());
+export function VeriPressProvider({ children }: { children: React.ReactNode }) {
+  const [publishedArticles, setPublishedArticles] = useState<StoredArticle[]>([]);
+  const [drafts, setDrafts] = useState<StoredArticle[]>([]);
+  const [profile, setProfile] = useState<UserProfile>(BLANK_PROFILE);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [following, setFollowing] = useState<FollowingMap>({});
+  const [followers, setFollowers] = useState<FollowersMap>({});
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
+  const [followingByUser, setFollowingByUser] = useState<Record<string, FollowingMap>>({});
+  const [loading, setLoading] = useState(true);
 
+  // Keep a ref to the active session so we can restore on reload
+  const sessionKey = "veripress.session-username";
+
+  // ── Initial load ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    async function init() {
+      setLoading(true);
+      try {
+        const [allArticles, allRegistered, allFollowingByUser, allFollowers] = await Promise.all([
+          api.getUserArticles(),
+          api.getRegisteredUsers(),
+          api.getFollowingByUser(),
+          api.getFollowerCounts(),
+        ]);
+        setPublishedArticles(allArticles);
+        setRegisteredUsers(allRegistered);
+        setFollowingByUser(allFollowingByUser);
+        setFollowers(allFollowers);
+
+        // Restore session if user was previously signed in
+        const savedUsername = window.localStorage.getItem(sessionKey);
+        if (savedUsername) {
+          const savedProfile = await api.getProfileForUser(savedUsername);
+          if (savedProfile) {
+            setProfile(savedProfile);
+            const acc = await api.getAccountByIdentifier(savedUsername);
+            if (acc) setAccount(acc);
+            const userFollowing = await api.getFollowingForUser(savedUsername);
+            setFollowing(userFollowing);
+            const userDrafts = await api.getDrafts(savedUsername);
+            setDrafts(userDrafts);
+          }
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+  }, []);
+
+  // ── Derived state ────────────────────────────────────────────────────────────
   const author = profile.name.trim() || profile.username.trim() || "Your Profile";
-  const avatar = profile.avatar ?? defaultAvatar;
-  const userArticles = publishedArticles.filter(item => item.ownerUsername ? item.ownerUsername.toLowerCase() === profile.username.toLowerCase() : item.author === author);
-  const registeredHandles = new Set(registeredUsers.map(user => `@${user.username}`.toLowerCase()));
-  // Seed every registered user as a key so followingCounts and followersByUser are never missing
-  // entries for users who have never followed anyone.
-  const storedFollowing = veriPressApi.getFollowingByUser();
+  const avatar = profile.avatar ?? "";
+  const userArticles = publishedArticles.filter((item) =>
+    item.ownerUsername
+      ? item.ownerUsername.toLowerCase() === profile.username.toLowerCase()
+      : item.author === author
+  );
+
+  // Build allFollowing with every registered user seeded
   const allFollowing: Record<string, FollowingMap> = {};
-  registeredUsers.forEach(user => { allFollowing[user.username.toLowerCase()] = {}; });
-  Object.entries(storedFollowing)
-    .filter(([username]) => profile.username ? username !== "guest" : true)
-    .forEach(([username, userFollowing]) => {
-      allFollowing[username.toLowerCase()] = Object.fromEntries(
-        Object.entries(userFollowing)
-          .filter(([handle, isFollowing]) => registeredHandles.has(handle.toLowerCase()) && isFollowing)
-          .map(([handle, isFollowing]) => [handle.toLowerCase(), isFollowing])
-      );
-    });
-  allFollowing[profile.username.toLowerCase()] = following;
+  registeredUsers.forEach((u) => { allFollowing[u.username.toLowerCase()] = {}; });
+  Object.entries(followingByUser).forEach(([username, map]) => {
+    allFollowing[username.toLowerCase()] = map;
+  });
+  if (profile.username) allFollowing[profile.username.toLowerCase()] = following;
+
   const actualFollowers: FollowersMap = {};
-  Object.values(allFollowing).forEach(userFollowing => Object.entries(userFollowing).forEach(([handle, isFollowing]) => {
-    if (isFollowing) actualFollowers[handle.toLowerCase()] = (actualFollowers[handle.toLowerCase()] ?? 0) + 1;
-  }));
-  const followingCounts = Object.fromEntries(Object.entries(allFollowing).map(([username, userFollowing]) => [username, Object.values(userFollowing).filter(Boolean).length]));
+  Object.values(allFollowing).forEach((map) =>
+    Object.entries(map).forEach(([handle, isFollowing]) => {
+      if (isFollowing)
+        actualFollowers[handle.toLowerCase()] = (actualFollowers[handle.toLowerCase()] ?? 0) + 1;
+    })
+  );
+
+  const followingCounts = Object.fromEntries(
+    Object.entries(allFollowing).map(([u, map]) => [u, Object.values(map).filter(Boolean).length])
+  );
+
   const followerHandles = Object.entries(allFollowing)
-    .filter(([, userFollowing]) => Boolean(userFollowing[`@${profile.username}`.toLowerCase()]))
-    .map(([username]) => `@${username}`);
-  // Expand followersByUser to cover every registered user as a key, including those who have
-  // never followed anyone (they still appear in allFollowing due to the seed above).
-  const followersByUser = Object.fromEntries(Object.keys(allFollowing).map(username => [
-    username,
-    Object.entries(allFollowing)
-      .filter(([, userFollowing]) => Boolean(userFollowing[`@${username}`]))
-      .map(([followerUsername]) => `@${followerUsername}`),
-  ]));
+    .filter(([, map]) => Boolean(map[`@${profile.username}`.toLowerCase()]))
+    .map(([u]) => `@${u}`);
 
-  useEffect(() => veriPressApi.saveUserArticles(publishedArticles), [publishedArticles]);
-  useEffect(() => veriPressApi.saveDrafts(drafts), [drafts]);
-  useEffect(() => veriPressApi.saveFollowing(following, profile.username || "guest"), [following, profile.username]);
-  useEffect(() => veriPressApi.saveFollowers(followers), [followers]);
-  useEffect(() => {
-    veriPressApi.saveProfile(profile);
-    if (profile.username) veriPressApi.saveProfileForUser(profile.username, profile);
-  }, [profile]);
-  useEffect(() => veriPressApi.saveRegisteredUsers(registeredUsers), [registeredUsers]);
+  const followersByUser = Object.fromEntries(
+    Object.keys(allFollowing).map((username) => [
+      username,
+      Object.entries(allFollowing)
+        .filter(([, map]) => Boolean(map[`@${username}`]))
+        .map(([followerUsername]) => `@${followerUsername}`),
+    ])
+  );
 
-  useEffect(() => {
-    setPublishedArticles(current => current.map(item => item.ownerUsername?.toLowerCase() === profile.username.toLowerCase() || (!item.ownerUsername && item.author === author) ? { ...item, author, avatar, ownerUsername: profile.username } : item));
-    setDrafts(current => current.map(item => ({ ...item, author, avatar })));
-  }, [author, avatar, profile.username]);
+  // ── Refresh helpers ──────────────────────────────────────────────────────────
+  const refreshGlobal = useCallback(async () => {
+    const [allArticles, allRegistered, allFollowingByUser, allFollowers] = await Promise.all([
+      api.getUserArticles(),
+      api.getRegisteredUsers(),
+      api.getFollowingByUser(),
+      api.getFollowerCounts(),
+    ]);
+    setPublishedArticles(allArticles);
+    setRegisteredUsers(allRegistered);
+    setFollowingByUser(allFollowingByUser);
+    setFollowers(allFollowers);
+  }, []);
 
-  const value = useMemo(() => ({
-    userArticles,
-    publishedArticles,
-    drafts,
-    following,
-    followingCounts,
-    followerHandles,
-    followingByUser: allFollowing,
-    followersByUser,
-    followers: actualFollowers,
-    account,
-    profile,
-    registeredUsers,
-    completeProfile: (nextProfile: Partial<UserProfile>) => {
-      const next = { ...profile, ...nextProfile, username: pendingAccount?.username ?? profile.username };
-      const usernameChanged = next.username.trim().toLowerCase() !== profile.username.trim().toLowerCase();
-      if (usernameChanged && !veriPressApi.renameAccountUsername(profile.username, next.username)) return;
-      const nextAuthor = next.name.trim() || next.username.trim() || "Your Profile";
-      const nextAvatar = next.avatar ?? defaultAvatar;
-      if (pendingAccount) {
-        // Account was already written to storage eagerly in createAccount.
-        // Just update the active-session pointer and state.
-        veriPressApi.saveAccount(pendingAccount);
-        setAccount(pendingAccount);
-        setFollowing(getRegisteredFollowing(defaultFollowing, pendingAccount.username));
-        setFollowers(veriPressApi.getFollowerCounts());
-        setPendingAccount(null);
-      }
-      setProfile(next);
-      if (!pendingAccount && usernameChanged && account) {
-        const updatedAccount = { ...account, username: next.username };
-        veriPressApi.saveAccount(updatedAccount);
-        setAccount(updatedAccount);
-      }
-      setRegisteredUsers(current => {
-        const previousUsername = profile.username;
-        // Also deduplicate by the new username to handle cases where the same
-        // user registered twice or registered-users got duplicated.
-        const updated = current.filter(user =>
-          user.username.toLowerCase() !== previousUsername.toLowerCase() &&
-          user.username.toLowerCase() !== next.username.toLowerCase()
-        );
-        return [...updated, { username: next.username, name: next.name, avatar: next.avatar, description: next.description }];
-      });
-      setPublishedArticles(current => current.map(item => item.ownerUsername?.toLowerCase() === profile.username.toLowerCase() || (!item.ownerUsername && item.author === author) ? { ...item, author: nextAuthor, avatar: nextAvatar, ownerUsername: next.username } : item));
-      setDrafts(current => current.map(item => ({ ...item, author: nextAuthor, avatar: nextAvatar })));
-    },
-    createAccount: (nextAccount: Account) => {
-      // Always read fresh from storage to catch accounts registered in other sessions.
-      const existingAccounts = veriPressApi.getAccounts();
-      if (existingAccounts.some(existing => existing.username.toLowerCase() === nextAccount.username.toLowerCase())) return "username-exists" as const;
-      if (existingAccounts.some(existing => existing.email.toLowerCase() === nextAccount.email.toLowerCase())) return "email-exists" as const;
-      // Eagerly persist the account now so sign-in works even if the user
-      // refreshes before completing the profile step.
-      veriPressApi.saveAccounts([...existingAccounts, nextAccount]);
-      setPendingAccount(nextAccount);
-      return "created" as const;
-    },
-    signIn: (identifier: string, password: string) => {
-      const normalizedIdentifier = identifier.trim().toLowerCase();
-      const normalizedPassword = password.trim();
-      // Always read accounts fresh from storage (covers cross-session registrations).
-      const accounts = veriPressApi.getAccounts();
-      let matchedAccount = accounts.find(stored =>
-        (stored.email.toLowerCase() === normalizedIdentifier ||
-          stored.username.toLowerCase() === normalizedIdentifier) &&
-        stored.password === normalizedPassword
+  // ── Actions ──────────────────────────────────────────────────────────────────
+
+  const createAccount = useCallback(async (
+    nextAccount: Account
+  ): Promise<"created" | "username-exists" | "email-exists"> => {
+    const existing = await api.getAccounts();
+    if (existing.some((a) => a.username.toLowerCase() === nextAccount.username.toLowerCase()))
+      return "username-exists";
+    if (existing.some((a) => a.email.toLowerCase() === nextAccount.email.toLowerCase()))
+      return "email-exists";
+    await api.saveAccount(nextAccount);
+    return "created";
+  }, []);
+
+  const signIn = useCallback(async (identifier: string, password: string): Promise<boolean> => {
+    const normalizedPassword = password.trim();
+    const matched = await api.getAccountByIdentifier(identifier);
+
+    let matchedAccount: Account | null = null;
+
+    if (matched && matched.password === normalizedPassword) {
+      matchedAccount = matched;
+    } else {
+      // Fallback: orphaned registered user with no account record
+      const freshUsers = await api.getRegisteredUsers();
+      const orphan = freshUsers.find(
+        (u) => u.username.toLowerCase() === identifier.trim().toLowerCase()
       );
-
-      // Fallback: if no account record exists yet (registered before the eager-save fix),
-      // accept any registered username/email match and reconstruct the account record.
-      if (!matchedAccount) {
-        const freshRegisteredUsers = veriPressApi.getRegisteredUsers();
-        const orphanedUser = freshRegisteredUsers.find(user =>
-          user.username.toLowerCase() === normalizedIdentifier
-        );
-        if (orphanedUser && !accounts.some(a => a.username.toLowerCase() === orphanedUser.username.toLowerCase())) {
-          // Reconstruct and save the missing account so future logins work normally.
-          const recoveredAccount: Account = { username: orphanedUser.username, email: `${orphanedUser.username}@veripress.local`, password: normalizedPassword };
-          veriPressApi.saveAccounts([...accounts, recoveredAccount]);
-          matchedAccount = recoveredAccount;
+      if (orphan) {
+        const existing = await api.getAccounts();
+        if (!existing.some((a) => a.username.toLowerCase() === orphan.username.toLowerCase())) {
+          const recovered: Account = {
+            username: orphan.username,
+            email: `${orphan.username}@veripress.local`,
+            password: normalizedPassword,
+          };
+          await api.saveAccount(recovered);
+          matchedAccount = recovered;
         }
       }
+    }
 
-      if (!matchedAccount) return false;
+    if (!matchedAccount) return false;
 
-      // Read registeredUsers fresh from storage in case state is stale.
-      const freshRegisteredUsers = veriPressApi.getRegisteredUsers();
-      const matchedUser = freshRegisteredUsers.find(user => user.username.toLowerCase() === matchedAccount!.username.toLowerCase());
-
-      // Load this user's own saved profile, then overlay registered-user fields
-      // so name/avatar/description are always up to date.
-      const storedProfile = veriPressApi.getProfileForUser(matchedAccount.username);
-      const baseProfile: UserProfile = storedProfile ?? {
-        name: matchedUser?.name ?? "",
-        username: matchedAccount.username,
-        avatar: matchedUser?.avatar ?? null,
-        description: matchedUser?.description ?? "",
-        phone: "",
-        gender: "",
-        dob: "",
-      };
-      const nextProfile: UserProfile = {
-        ...baseProfile,
-        username: matchedAccount.username,
-        // Always sync name/avatar/description from the registered-user record
-        // so edits made via completeProfile are reflected correctly.
-        name: matchedUser?.name ?? baseProfile.name,
-        avatar: matchedUser?.avatar !== undefined ? matchedUser.avatar : baseProfile.avatar,
-        description: matchedUser?.description ?? baseProfile.description,
-      };
-
-      veriPressApi.saveAccount(matchedAccount);
-      setAccount(matchedAccount);
-      setRegisteredUsers(freshRegisteredUsers);
-      setFollowing(getRegisteredFollowing(defaultFollowing, matchedAccount.username));
-      setFollowers(veriPressApi.getFollowerCounts());
-      // Reload all published articles from storage so articles published by other users
-      // in previous sessions are always visible to the newly signed-in user.
-      setPublishedArticles(veriPressApi.getUserArticles());
-      // Fully replace profile state — never spread over the previous user's data.
-      setProfile(nextProfile);
-      if (matchedUser?.name) {
-        setDrafts(veriPressApi.getDrafts().filter(draft => draft.author === matchedUser.name || draft.ownerUsername?.toLowerCase() === matchedAccount!.username.toLowerCase()));
-      } else {
-        setDrafts([]);
-      }
-      return true;
-    },
-    validateCredentials: (identifier: string, password: string) => {
-      const normalizedIdentifier = identifier.trim().toLowerCase();
-      return veriPressApi.getAccounts().some(stored => (stored.email.toLowerCase() === normalizedIdentifier || stored.username.toLowerCase() === normalizedIdentifier) && stored.password === password);
-    },
-    publishArticle: (article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">, id?: string) => {
-      setDrafts(current => id ? current.filter(item => item.id !== id) : current);
-      setPublishedArticles(current => id ? [{ ...article, id, author, avatar, ownerUsername: profile.username, time: formatContentTime("Uploaded") }, ...current.filter(item => item.id !== id)] : [{ ...article, id: `user-${Date.now()}`, author, avatar, ownerUsername: profile.username, time: formatContentTime("Uploaded") }, ...current]);
-    },
-    saveDraft: (article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">, id?: string) => {
-      setDrafts(current => id ? current.map(item => item.id === id ? { ...item, ...article, author, avatar, time: formatContentTime("Drafted") } : item) : [{ ...article, id: `draft-${Date.now()}`, author, avatar, time: formatContentTime("Drafted") }, ...current]);
-    },
-    updateDraft: (id: string, article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">) => setDrafts(current => current.map(item => item.id === id ? { ...item, ...article, author, avatar, time: formatContentTime("Drafted") } : item)),
-    updatePublished: (id: string, article: Omit<StoredArticle, "id" | "author" | "avatar" | "time">) => setPublishedArticles(current => current.map(item => item.id === id ? { ...item, ...article, author, avatar, ownerUsername: profile.username, time: formatContentTime("Uploaded") } : item)),
-    deleteDraft: (id: string) => setDrafts(current => current.filter(item => item.id !== id)),
-    deletePublished: (id: string) => setPublishedArticles(current => current.filter(item => item.id !== id)),
-    toggleFollowing: (handle: string) => {
-      if (profile.username && handle.toLowerCase() === `@${profile.username.toLowerCase()}`) return;
-      const knownHandles = new Set([
-        ...registeredUsers.map(user => `@${user.username}`.toLowerCase()),
+    const [savedProfile, userFollowing, userDrafts, allArticles, allRegistered, allFollowingByUser, allFollowers] =
+      await Promise.all([
+        api.getProfileForUser(matchedAccount.username),
+        api.getFollowingForUser(matchedAccount.username),
+        api.getDrafts(matchedAccount.username),
+        api.getUserArticles(),
+        api.getRegisteredUsers(),
+        api.getFollowingByUser(),
+        api.getFollowerCounts(),
       ]);
-      if (!knownHandles.has(handle.toLowerCase())) return;
-      const canonicalHandle = handle.toLowerCase();
-      const isFollowing = Boolean(following[canonicalHandle]);
-      const nextFollowing = { ...following, [canonicalHandle]: !isFollowing };
-      setFollowing(nextFollowing);
-      const allFollowing = veriPressApi.getFollowingByUser();
-      allFollowing[profile.username.toLowerCase()] = nextFollowing;
-      const nextFollowers: FollowersMap = {};
-      Object.values(allFollowing).forEach(userFollowing => Object.entries(userFollowing).forEach(([followedHandle, follows]) => {
-        if (follows) nextFollowers[followedHandle.toLowerCase()] = (nextFollowers[followedHandle.toLowerCase()] ?? 0) + 1;
-      }));
-      setFollowers(nextFollowers);
-    },
-    logout: () => {
-      veriPressApi.clearSession();
-      setDrafts([]);
-      setFollowers(veriPressApi.getFollowerCounts());
-      // Reset profile to blank so the next sign-in always starts clean.
-      setProfile({ name: "", username: "", avatar: null, description: "", phone: "", gender: "", dob: "" });
-      setAccount(null);
-      setFollowing({});
-    },
-  }), [account, author, avatar, defaultFollowing, drafts, followers, following, pendingAccount, profile, publishedArticles, registeredUsers, userArticles]);
 
-  return <VeriPressContext.Provider value={value}>{children}</VeriPressContext.Provider>;
+    const nextProfile: UserProfile = savedProfile ?? {
+      ...BLANK_PROFILE,
+      username: matchedAccount.username,
+    };
+
+    setAccount(matchedAccount);
+    setProfile(nextProfile);
+    setFollowing(userFollowing);
+    setDrafts(userDrafts);
+    setPublishedArticles(allArticles);
+    setRegisteredUsers(allRegistered);
+    setFollowingByUser(allFollowingByUser);
+    setFollowers(allFollowers);
+
+    // Persist session
+    window.localStorage.setItem(sessionKey, matchedAccount.username);
+    return true;
+  }, []);
+
+  const completeProfile = useCallback(async (nextProfile: Partial<UserProfile>): Promise<void> => {
+    const next: UserProfile = { ...profile, ...nextProfile };
+    const usernameChanged =
+      next.username.trim().toLowerCase() !== profile.username.trim().toLowerCase();
+    if (usernameChanged) {
+      const ok = await api.renameAccountUsername(profile.username, next.username);
+      if (!ok) return;
+    }
+
+    await api.saveProfileForUser(next.username, next);
+
+    // Update articles and drafts author info
+    const updatedArticles = publishedArticles.map((item) =>
+      item.ownerUsername?.toLowerCase() === profile.username.toLowerCase() ||
+      (!item.ownerUsername && item.author === author)
+        ? { ...item, author: next.name || next.username, avatar: next.avatar ?? "", ownerUsername: next.username }
+        : item
+    );
+    for (const a of updatedArticles.filter(
+      (a) => a.ownerUsername?.toLowerCase() === next.username.toLowerCase()
+    )) {
+      await api.saveArticle(a);
+    }
+
+    const updatedDrafts = drafts.map((item) => ({
+      ...item,
+      author: next.name || next.username,
+      avatar: next.avatar ?? "",
+      ownerUsername: next.username,
+    }));
+    for (const d of updatedDrafts) await api.saveDraft(d);
+
+    setProfile(next);
+    setPublishedArticles(updatedArticles);
+    setDrafts(updatedDrafts);
+
+    if (profile.username) {
+      window.localStorage.setItem(sessionKey, next.username);
+    }
+
+    // Sync registered users
+    await refreshGlobal();
+  }, [profile, author, publishedArticles, drafts, refreshGlobal]);
+
+  const publishArticle = useCallback(async (
+    articleData: Omit<StoredArticle, "id" | "author" | "avatar" | "time">,
+    id?: string
+  ): Promise<void> => {
+    const article: StoredArticle = {
+      ...articleData,
+      id: id ?? `user-${Date.now()}`,
+      author,
+      avatar,
+      ownerUsername: profile.username,
+      time: formatContentTime("Uploaded"),
+    };
+    // Remove from drafts if promoting
+    if (id) {
+      await api.deleteDraft(id);
+      setDrafts((current) => current.filter((d) => d.id !== id));
+    }
+    await api.saveArticle(article);
+    setPublishedArticles((current) => [article, ...current.filter((a) => a.id !== article.id)]);
+  }, [author, avatar, profile.username]);
+
+  const saveDraftFn = useCallback(async (
+    articleData: Omit<StoredArticle, "id" | "author" | "avatar" | "time">,
+    id?: string
+  ): Promise<void> => {
+    const draft: StoredArticle = {
+      ...articleData,
+      id: id ?? `draft-${Date.now()}`,
+      author,
+      avatar,
+      ownerUsername: profile.username,
+      time: formatContentTime("Drafted"),
+    };
+    await api.saveDraft(draft);
+    setDrafts((current) =>
+      id
+        ? current.map((d) => (d.id === id ? draft : d))
+        : [draft, ...current]
+    );
+  }, [author, avatar, profile.username]);
+
+  const updateDraft = useCallback(async (
+    id: string,
+    articleData: Omit<StoredArticle, "id" | "author" | "avatar" | "time">
+  ): Promise<void> => {
+    const draft: StoredArticle = {
+      ...articleData,
+      id,
+      author,
+      avatar,
+      ownerUsername: profile.username,
+      time: formatContentTime("Drafted"),
+    };
+    await api.saveDraft(draft);
+    setDrafts((current) => current.map((d) => (d.id === id ? draft : d)));
+  }, [author, avatar, profile.username]);
+
+  const updatePublished = useCallback(async (
+    id: string,
+    articleData: Omit<StoredArticle, "id" | "author" | "avatar" | "time">
+  ): Promise<void> => {
+    const article: StoredArticle = {
+      ...articleData,
+      id,
+      author,
+      avatar,
+      ownerUsername: profile.username,
+      time: formatContentTime("Uploaded"),
+    };
+    await api.saveArticle(article);
+    setPublishedArticles((current) => current.map((a) => (a.id === id ? article : a)));
+  }, [author, avatar, profile.username]);
+
+  const deleteDraftFn = useCallback(async (id: string): Promise<void> => {
+    await api.deleteDraft(id);
+    setDrafts((current) => current.filter((d) => d.id !== id));
+  }, []);
+
+  const deletePublished = useCallback(async (id: string): Promise<void> => {
+    await api.deleteArticle(id);
+    setPublishedArticles((current) => current.filter((a) => a.id !== id));
+  }, []);
+
+  const toggleFollowing = useCallback(async (handle: string): Promise<void> => {
+    if (!profile.username) return;
+    if (handle.toLowerCase() === `@${profile.username.toLowerCase()}`) return;
+
+    const knownHandles = new Set(registeredUsers.map((u) => `@${u.username}`.toLowerCase()));
+    if (!knownHandles.has(handle.toLowerCase())) return;
+
+    const isFollowing = Boolean(following[handle.toLowerCase()]);
+    if (isFollowing) {
+      await api.unfollowUser(profile.username, handle);
+    } else {
+      await api.followUser(profile.username, handle);
+    }
+
+    const [newFollowing, newFollowingByUser, newFollowers] = await Promise.all([
+      api.getFollowingForUser(profile.username),
+      api.getFollowingByUser(),
+      api.getFollowerCounts(),
+    ]);
+    setFollowing(newFollowing);
+    setFollowingByUser(newFollowingByUser);
+    setFollowers(newFollowers);
+  }, [profile.username, following, registeredUsers]);
+
+  const logout = useCallback(() => {
+    window.localStorage.removeItem(sessionKey);
+    setProfile(BLANK_PROFILE);
+    setAccount(null);
+    setFollowing({});
+    setDrafts([]);
+  }, []);
+
+  const validateCredentials = useCallback(async (
+    identifier: string,
+    password: string
+  ): Promise<boolean> => {
+    const matched = await api.getAccountByIdentifier(identifier);
+    return Boolean(matched && matched.password === password.trim());
+  }, []);
+
+  return (
+    <VeriPressContext.Provider
+      value={{
+        userArticles,
+        publishedArticles,
+        drafts,
+        following,
+        followingCounts,
+        followerHandles,
+        followingByUser: allFollowing,
+        followersByUser,
+        followers: actualFollowers,
+        profile,
+        registeredUsers,
+        account,
+        loading,
+        publishArticle,
+        saveDraft: saveDraftFn,
+        updateDraft,
+        updatePublished,
+        deleteDraft: deleteDraftFn,
+        deletePublished,
+        toggleFollowing,
+        logout,
+        createAccount,
+        signIn,
+        completeProfile,
+        validateCredentials,
+      }}
+    >
+      {children}
+    </VeriPressContext.Provider>
+  );
 }
 
 export function useVeriPress() {

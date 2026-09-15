@@ -1456,8 +1456,19 @@ function AppContent() {
   const [deletingArticle, setDeletingArticle] = useState<{ article: Article; isDraft: boolean } | null>(null);
   const [accountDraft, setAccountDraft] = useState<AccountDraft>({ username: "", email: "", password: "", confirm: "" });
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" });
-  const { userArticles, publishedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers } = useVeriPress();
+  const { userArticles, publishedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading } = useVeriPress();
   const selfHandle = profile.username ? `@${profile.username}` : "";
+
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-white">
+        <div className="flex flex-col items-center gap-4">
+          <img src={LOGO_SRC} alt="VeriPress" width={64} height={64} className="object-contain" />
+          <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#1B2B6B", borderTopColor: "transparent" }} />
+        </div>
+      </div>
+    );
+  }
   const registeredPeople: Person[] = registeredUsers
     .filter(user => user.username.toLowerCase() !== profile.username.toLowerCase())
     .map(user => ({ name: user.name || user.username, handle: `@${user.username}`, avatar: user.avatar, following: Boolean(following[`@${user.username}`.toLowerCase()]) }));
@@ -1602,5 +1613,5 @@ function AppContent() {
 }
 
 export default function App() {
-  return <VeriPressProvider defaultFollowing={Object.fromEntries(SUGGESTED_PEOPLE.map(person => [person.handle, false]))}><AppContent /></VeriPressProvider>;
+  return <VeriPressProvider><AppContent /></VeriPressProvider>;
 }

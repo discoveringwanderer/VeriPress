@@ -1,3 +1,5 @@
+import { supabase } from "../lib/supabase";
+
 export type StoredArticle = {
   id: string;
   title: string;
@@ -13,179 +15,266 @@ export type StoredArticle = {
 export type FollowingMap = Record<string, boolean>;
 export type FollowersMap = Record<string, number>;
 export type Account = { username: string; email: string; password: string };
-export type UserProfile = { name: string; username: string; avatar: string | null; description: string; phone: string; gender: string; dob: string };
-export type RegisteredUser = { username: string; name: string; avatar: string | null; description: string };
+export type UserProfile = {
+  name: string;
+  username: string;
+  avatar: string | null;
+  description: string;
+  phone: string;
+  gender: string;
+  dob: string;
+};
+export type RegisteredUser = {
+  username: string;
+  name: string;
+  avatar: string | null;
+  description: string;
+};
 
-const ARTICLES_KEY = "veripress.user-articles";
-const DRAFTS_KEY = "veripress.user-drafts";
-const FOLLOWING_KEY = "veripress.following";
-const FOLLOWING_BY_USER_KEY = "veripress.following-by-user";
-const FOLLOWERS_KEY = "veripress.followers";
-const ACCOUNT_KEY = "veripress.account";
-const ACCOUNTS_KEY = "veripress.accounts";
-const PROFILE_KEY = "veripress.profile";
-const REGISTERED_USERS_KEY = "veripress.registered-users";
+// ── Accounts ────────────────────────────────────────────────────────────────
+
+export async function getAccounts(): Promise<Account[]> {
+  const { data } = await supabase.from("accounts").select("username, email, password");
+  return (data ?? []) as Account[];
+}
+
+export async function saveAccount(account: Account): Promise<void> {
+  await supabase.from("accounts").upsert(
+    { username: account.username, email: account.email, password: account.password },
+    { onConflict: "username" }
+  );
+}
+
+export async function getAccountByIdentifier(identifier: string): Promise<Account | null> {
+  const lower = identifier.trim().toLowerCase();
+  const { data } = await supabase
+    .from("accounts")
+    .select("username, email, password")
+    .or(`email.ilike.${lower},username.ilike.${lower}`)
+    .limit(1)
+    .single();
+  return data as Account | null;
+}
+
+export async function renameAccountUsername(
+  previousUsername: string,
+  nextUsername: string
+): Promise<boolean> {
+  const prev = previousUsername.trim().toLowerCase();
+  const next = nextUsername.trim();
+  if (!prev || !next.toLowerCase() || prev === next.toLowerCase()) return true;
+
+  const { data: existing } = await supabase
+    .from("accounts")
+    .select("username")
+    .ilike("username", next)
+    .neq("username", previousUsername)
+    .limit(1);
+  if (existing && existing.length > 0) return false;
+
+  await supabase.from("accounts").update({ username: next }).ilike("username", previousUsername);
+  return true;
+}
+
+// ── Profiles ────────────────────────────────────────────────────────────────
+
+export async function getProfileForUser(username: string): Promise<UserProfile | null> {
+  if (!username) return null;
+  const { data } = await supabase
+    .from("profiles")
+    .select("*")
+    .ilike("username", username)
+    .limit(1)
+    .single();
+  if (!data) return null;
+  return {
+    username: data.username,
+    name: data.name ?? "",
+    avatar: data.avatar ?? null,
+    description: data.description ?? "",
+    phone: data.phone ?? "",
+    gender: data.gender ?? "",
+    dob: data.dob ?? "",
+  };
+}
+
+export async function saveProfileForUser(username: string, profile: UserProfile): Promise<void> {
+  if (!username) return;
+  await supabase.from("profiles").upsert(
+    {
+      username,
+      name: profile.name,
+      avatar: profile.avatar,
+      description: profile.description,
+      phone: profile.phone,
+      gender: profile.gender,
+      dob: profile.dob,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "username" }
+  );
+}
+
+// ── Articles ────────────────────────────────────────────────────────────────
+
+export async function getUserArticles(): Promise<StoredArticle[]> {
+  const { data } = await supabase
+    .from("articles")
+    .select("*")
+    .order("created_at", { ascending: false });
+  return (data ?? []).map(dbToArticle);
+}
+
+export async function saveArticle(article: StoredArticle): Promise<void> {
+  await supabase.from("articles").upsert(articleToDb(article), { onConflict: "id" });
+}
+
+export async function deleteArticle(id: string): Promise<void> {
+  await supabase.from("articles").delete().eq("id", id);
+}
+
+// ── Drafts ──────────────────────────────────────────────────────────────────
+
+export async function getDrafts(ownerUsername: string): Promise<StoredArticle[]> {
+  if (!ownerUsername) return [];
+  const { data } = await supabase
+    .from("drafts")
+    .select("*")
+    .ilike("owner_username", ownerUsername)
+    .order("created_at", { ascending: false });
+  return (data ?? []).map(dbToArticle);
+}
+
+export async function saveDraft(article: StoredArticle): Promise<void> {
+  await supabase.from("drafts").upsert(articleToDb(article), { onConflict: "id" });
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  await supabase.from("drafts").delete().eq("id", id);
+}
+
+// ── Following ────────────────────────────────────────────────────────────────
+
+export async function getFollowingForUser(username: string): Promise<FollowingMap> {
+  if (!username) return {};
+  const { data } = await supabase
+    .from("following")
+    .select("following_username")
+    .ilike("follower_username", username);
+  const map: FollowingMap = {};
+  (data ?? []).forEach((row) => {
+    map[`@${row.following_username}`.toLowerCase()] = true;
+  });
+  return map;
+}
+
+export async function getFollowingByUser(): Promise<Record<string, FollowingMap>> {
+  const { data } = await supabase.from("following").select("follower_username, following_username");
+  const result: Record<string, FollowingMap> = {};
+  (data ?? []).forEach((row) => {
+    const follower = row.follower_username.toLowerCase();
+    const following = `@${row.following_username}`.toLowerCase();
+    if (!result[follower]) result[follower] = {};
+    result[follower][following] = true;
+  });
+  return result;
+}
+
+export async function followUser(followerUsername: string, followingUsername: string): Promise<void> {
+  await supabase.from("following").upsert(
+    {
+      follower_username: followerUsername.toLowerCase(),
+      following_username: followingUsername.replace(/^@/, "").toLowerCase(),
+    },
+    { onConflict: "follower_username,following_username" }
+  );
+}
+
+export async function unfollowUser(followerUsername: string, followingUsername: string): Promise<void> {
+  await supabase
+    .from("following")
+    .delete()
+    .ilike("follower_username", followerUsername)
+    .ilike("following_username", followingUsername.replace(/^@/, ""));
+}
+
+export async function getFollowerCounts(): Promise<FollowersMap> {
+  const { data } = await supabase.from("following").select("following_username");
+  const counts: FollowersMap = {};
+  (data ?? []).forEach((row) => {
+    const handle = `@${row.following_username}`.toLowerCase();
+    counts[handle] = (counts[handle] ?? 0) + 1;
+  });
+  return counts;
+}
+
+// ── Registered Users ─────────────────────────────────────────────────────────
+
+export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("username, name, avatar, description");
+  return (data ?? []).map((row) => ({
+    username: row.username,
+    name: row.name ?? "",
+    avatar: row.avatar ?? null,
+    description: row.description ?? "",
+  }));
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function dbToArticle(row: Record<string, unknown>): StoredArticle {
+  return {
+    id: row.id as string,
+    title: row.title as string,
+    body: row.body as string,
+    image: (row.image as string) ?? "",
+    category: (row.category as string) ?? "My Story",
+    author: row.author as string,
+    avatar: (row.avatar as string) ?? "",
+    time: row.created_at
+      ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
+          new Date(row.created_at as string)
+        )
+      : "",
+    ownerUsername: row.owner_username as string,
+  };
+}
+
+function articleToDb(article: StoredArticle): Record<string, unknown> {
+  return {
+    id: article.id,
+    title: article.title,
+    body: article.body,
+    image: article.image ?? "",
+    category: article.category ?? "My Story",
+    author: article.author,
+    avatar: article.avatar ?? "",
+    owner_username: article.ownerUsername ?? "",
+  };
+}
+
+// ── Remembered email (kept in localStorage — not sensitive) ──────────────────
+
 const REMEMBERED_EMAIL_KEY = "veripress.remembered-email";
 
+export function getRememberedEmail(): string {
+  try { return window.localStorage.getItem(REMEMBERED_EMAIL_KEY) ?? ""; } catch { return ""; }
+}
+
+export function saveRememberedEmail(email: string): void {
+  try {
+    if (email) window.localStorage.setItem(REMEMBERED_EMAIL_KEY, email);
+    else window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+  } catch { /* optional */ }
+}
+
+// Keep a legacy veriPressApi object so existing call sites that haven't been
+// updated yet don't throw at import time.
 export const veriPressApi = {
-  getUserArticles(): StoredArticle[] {
-    return readStorage<StoredArticle[]>(ARTICLES_KEY, []);
-  },
-
-  saveUserArticles(articles: StoredArticle[]) {
-    writeStorage(ARTICLES_KEY, articles);
-  },
-
-  getDrafts(): StoredArticle[] {
-    return readStorage<StoredArticle[]>(DRAFTS_KEY, []);
-  },
-
-  saveDrafts(drafts: StoredArticle[]) {
-    writeStorage(DRAFTS_KEY, drafts);
-  },
-
-  getFollowing(defaultValue: FollowingMap, username = "guest"): FollowingMap {
-    const allFollowing = readStorage<Record<string, FollowingMap> | null>(FOLLOWING_BY_USER_KEY, null);
-    if (allFollowing) return allFollowing[username.toLowerCase()] ?? defaultValue;
-    return readStorage<FollowingMap>(FOLLOWING_KEY, defaultValue);
-  },
-
-  saveFollowing(following: FollowingMap, username = "guest") {
-    writeStorage(FOLLOWING_KEY, following);
-    const allFollowing = this.getFollowingByUser();
-    if (username.toLowerCase() !== "guest") delete allFollowing.guest;
-    allFollowing[username.toLowerCase()] = following;
-    writeStorage(FOLLOWING_BY_USER_KEY, allFollowing);
-  },
-
-  getFollowingByUser(): Record<string, FollowingMap> {
-    const stored = readStorage<Record<string, FollowingMap> | null>(FOLLOWING_BY_USER_KEY, null);
-    const registeredHandles = new Set(this.getRegisteredUsers().map(user => `@${user.username}`.toLowerCase()));
-    const source = stored ?? { guest: readStorage<FollowingMap>(FOLLOWING_KEY, {}) };
-    return Object.fromEntries(Object.entries(source).map(([username, following]) => [
-      username.toLowerCase(),
-      Object.fromEntries(Object.entries(following).filter(([handle, isFollowing]) => registeredHandles.has(handle.toLowerCase()) && isFollowing).map(([handle, isFollowing]) => [handle.toLowerCase(), isFollowing])),
-    ]));
-  },
-
-  getFollowerCounts(): FollowersMap {
-    const counts: FollowersMap = {};
-    Object.values(this.getFollowingByUser()).forEach(following => {
-      Object.entries(following).forEach(([handle, isFollowing]) => {
-        if (isFollowing) counts[handle] = (counts[handle] ?? 0) + 1;
-      });
-    });
-    return counts;
-  },
-
-  getFollowers(defaultValue: FollowersMap): FollowersMap {
-    return readStorage<FollowersMap>(FOLLOWERS_KEY, defaultValue);
-  },
-
-  saveFollowers(followers: FollowersMap) {
-    writeStorage(FOLLOWERS_KEY, followers);
-  },
-
-  getAccount(): Account | null {
-    const activeAccount = readStorage<Account | null>(ACCOUNT_KEY, null);
-    return activeAccount ?? this.getAccounts()[0] ?? null;
-  },
-
-  saveAccount(account: Account) {
-    writeStorage(ACCOUNT_KEY, account);
-  },
-
-  getAccounts(): Account[] {
-    const accounts = readStorage<Account[] | null>(ACCOUNTS_KEY, null);
-    if (accounts) return accounts;
-    const legacyAccount = readStorage<Account | null>(ACCOUNT_KEY, null);
-    return legacyAccount ? [legacyAccount] : [];
-  },
-
-  saveAccounts(accounts: Account[]) {
-    writeStorage(ACCOUNTS_KEY, accounts);
-  },
-
-  renameAccountUsername(previousUsername: string, nextUsername: string): boolean {
-    const previousKey = previousUsername.trim().toLowerCase();
-    const nextValue = nextUsername.trim();
-    const nextKey = nextValue.toLowerCase();
-    if (!previousKey || !nextKey || previousKey === nextKey) return true;
-
-    const accounts = this.getAccounts();
-    if (accounts.some(account => account.username.toLowerCase() === nextKey && account.username.toLowerCase() !== previousKey)) return false;
-    this.saveAccounts(accounts.map(account => account.username.toLowerCase() === previousKey ? { ...account, username: nextValue } : account));
-
-    const followingByUser = this.getFollowingByUser();
-    const migratedFollowing: Record<string, FollowingMap> = {};
-    Object.entries(followingByUser).forEach(([username, following]) => {
-      const ownerKey = username === previousKey ? nextKey : username;
-      migratedFollowing[ownerKey] = Object.fromEntries(Object.entries(following).map(([handle, isFollowing]) => [
-        handle.toLowerCase() === `@${previousKey}` ? `@${nextKey}` : handle,
-        isFollowing,
-      ]));
-    });
-    writeStorage(FOLLOWING_BY_USER_KEY, migratedFollowing);
-    return true;
-  },
-
-  getRegisteredUsers(): RegisteredUser[] {
-    return readStorage<RegisteredUser[]>(REGISTERED_USERS_KEY, []);
-  },
-
-  saveRegisteredUsers(users: RegisteredUser[]) {
-    writeStorage(REGISTERED_USERS_KEY, users);
-  },
-
-  getRememberedEmail(): string {
-    try {
-      return window.localStorage.getItem(REMEMBERED_EMAIL_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  },
-
-  saveRememberedEmail(email: string) {
-    try {
-      if (email) window.localStorage.setItem(REMEMBERED_EMAIL_KEY, email);
-      else window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
-    } catch {
-      // Remembered email is optional when storage is unavailable.
-    }
-  },
-
-  getProfile(): UserProfile {
-    const fallback: UserProfile = { name: "", username: "", avatar: null, description: "", phone: "", gender: "", dob: "" };
-    return { ...fallback, ...readStorage<Partial<UserProfile>>(PROFILE_KEY, {}) };
-  },
-
-  saveProfile(profile: UserProfile) {
-    writeStorage(PROFILE_KEY, profile);
-  },
-
-  // Per-user profile storage — each username gets its own slot so switching
-  // accounts always loads the correct profile data.
-  getProfileForUser(username: string): UserProfile | null {
-    if (!username) return null;
-    const key = `${PROFILE_KEY}.${username.toLowerCase()}`;
-    const stored = readStorage<Partial<UserProfile> | null>(key, null);
-    if (!stored) return null;
-    const fallback: UserProfile = { name: "", username, avatar: null, description: "", phone: "", gender: "", dob: "" };
-    return { ...fallback, ...stored };
-  },
-
-  saveProfileForUser(username: string, profile: UserProfile) {
-    if (!username) return;
-    writeStorage(`${PROFILE_KEY}.${username.toLowerCase()}`, profile);
-  },
-
-  clearSession() {
-    window.localStorage.removeItem(DRAFTS_KEY);
-    window.localStorage.removeItem(PROFILE_KEY);
-    window.localStorage.removeItem(ACCOUNT_KEY);
-  },
-
-  // Wipes every veripress.* key from localStorage. Used for factory-reset.
+  getRememberedEmail,
+  saveRememberedEmail,
   nukeAllData() {
     try {
       const keys: string[] = [];
@@ -193,26 +282,7 @@ export const veriPressApi = {
         const k = window.localStorage.key(i);
         if (k && k.startsWith("veripress.")) keys.push(k);
       }
-      keys.forEach(k => window.localStorage.removeItem(k));
-    } catch {
-      // Storage unavailable — nothing to clear.
-    }
+      keys.forEach((k) => window.localStorage.removeItem(k));
+    } catch { /* storage unavailable */ }
   },
 };
-
-function readStorage<T>(key: string, fallback: T): T {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value ? JSON.parse(value) as T : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStorage<T>(key: string, value: T) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // The app still works for the current session if storage is unavailable.
-  }
-}
