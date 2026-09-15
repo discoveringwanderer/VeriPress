@@ -386,16 +386,22 @@ function AuthOptionsScreen({ onSignIn, onSignUp }: { onSignIn: () => void; onSig
   );
 }
 
-function SignInScreen({ onBack, onSignIn }: { onBack: () => void; onSignIn: (identifier: string, password: string) => boolean }) {
+function SignInScreen({ onBack, onSignIn }: { onBack: () => void; onSignIn: (identifier: string, password: string) => Promise<boolean> }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
 
-  function submit() {
+  async function submit() {
     if (!email.trim() || !password) {
       setError("Enter your username/email and password.");
-    } else if (!onSignIn(email, password)) {
+      return;
+    }
+    setSigningIn(true);
+    const valid = await onSignIn(email, password);
+    setSigningIn(false);
+    if (!valid) {
       setError("This account was not recognized. Check your credentials or sign up first.");
     } else {
       setError("");
@@ -435,23 +441,23 @@ function SignInScreen({ onBack, onSignIn }: { onBack: () => void; onSignIn: (ide
         {error && <p className="text-center text-sm text-red-500 mb-4">{error}</p>}
       </div>
       <div className="px-6 pb-10">
-        <PrimaryButton label="Sign In" onClick={submit} />
+        <PrimaryButton label={signingIn ? "Signing in..." : "Sign In"} onClick={submit} disabled={signingIn} />
       </div>
     </div>
   );
 }
 
-function CreateAccountScreen({ draft, onDraftChange, onBack, onContinue }: { draft: AccountDraft; onDraftChange: (draft: AccountDraft) => void; onBack: () => void; onContinue: (account: { username: string; email: string; password: string }) => "created" | "username-exists" | "email-exists" | "account-exists" }) {
+function CreateAccountScreen({ draft, onDraftChange, onBack, onContinue }: { draft: AccountDraft; onDraftChange: (draft: AccountDraft) => void; onBack: () => void; onContinue: (account: { username: string; email: string; password: string }) => Promise<"created" | "username-exists" | "email-exists" | "account-exists"> }) {
   const [showP, setShowP] = useState(false);
   const [showC, setShowC] = useState(false);
   const [error, setError] = useState("");
 
-  function submit() {
+  async function submit() {
     if (!draft.username.trim() || !draft.email.trim() || !draft.password || !draft.confirm) return setError("Complete all fields to create your account.");
     if (!/^\S+@\S+\.\S+$/.test(draft.email)) return setError("Enter a valid email address.");
     if (draft.password.length < 6) return setError("Password must be at least 6 characters.");
     if (draft.password !== draft.confirm) return setError("Passwords do not match.");
-    const result = onContinue({ username: draft.username.trim(), email: draft.email.trim(), password: draft.password });
+    const result = await onContinue({ username: draft.username.trim(), email: draft.email.trim(), password: draft.password });
     if (result !== "created") {
       setError(result === "username-exists" ? "That username is already in use." : result === "email-exists" ? "That email is already registered." : "An account already exists. Sign in with that account.");
       return;
@@ -504,16 +510,17 @@ function CreateAccountScreen({ draft, onDraftChange, onBack, onContinue }: { dra
   );
 }
 
-function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { draft: ProfileDraft; onDraftChange: (draft: ProfileDraft) => void; onBack: () => void; onContinue: (profile: Partial<UserProfile>) => boolean }) {
+function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { draft: ProfileDraft; onDraftChange: (draft: ProfileDraft) => void; onBack: () => void; onContinue: (profile: Partial<UserProfile>) => Promise<boolean> }) {
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function submit() {
+  async function submit() {
     if (!draft.name.trim() || !draft.phone.trim() || !draft.gender.trim() || !draft.dob.trim()) {
       setError("Complete all profile fields before continuing.");
       return;
     }
-    if (!onContinue({ name: draft.name.trim(), phone: draft.phone.trim(), gender: draft.gender.trim(), dob: draft.dob.trim(), avatar: draft.avatar, description: draft.description.trim() })) {
+    const ok = await onContinue({ name: draft.name.trim(), phone: draft.phone.trim(), gender: draft.gender.trim(), dob: draft.dob.trim(), avatar: draft.avatar, description: draft.description.trim() });
+    if (!ok) {
       setError("Please check your profile details.");
       return;
     }
@@ -1459,6 +1466,19 @@ function AppContent() {
   const { userArticles, publishedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading } = useVeriPress();
   const selfHandle = profile.username ? `@${profile.username}` : "";
 
+  // Once loading finishes, redirect based on session state
+  const hasRedirectedRef = useRef(false);
+  useEffect(() => {
+    if (loading) return;
+    if (hasRedirectedRef.current) return;
+    hasRedirectedRef.current = true;
+    if (profile.username) {
+      replace("home");
+    } else {
+      replace("auth-options");
+    }
+  }, [loading, profile.username]);
+
   if (loading) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-white">
@@ -1543,11 +1563,11 @@ function AppContent() {
       case "auth-options":
         return <AuthOptionsScreen onSignIn={() => goTo("sign-in")} onSignUp={() => goTo("create-account")} />;
       case "sign-in":
-        return <SignInScreen onBack={goBack} onSignIn={(identifier, password) => { const valid = signIn(identifier, password); if (valid) replace("home"); return valid; }} />;
+        return <SignInScreen onBack={goBack} onSignIn={async (identifier, password) => { const valid = await signIn(identifier, password); if (valid) replace("home"); return valid; }} />;
       case "create-account":
-        return <CreateAccountScreen draft={accountDraft} onDraftChange={setAccountDraft} onBack={() => { setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goBack(); }} onContinue={account => { const result = createAccount(account); if (result === "created") goTo("complete-profile"); return result; }} />;
+        return <CreateAccountScreen draft={accountDraft} onDraftChange={setAccountDraft} onBack={() => { setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goBack(); }} onContinue={async account => { const result = await createAccount(account); if (result === "created") goTo("complete-profile"); return result; }} />;
       case "complete-profile":
-        return <CompleteProfileScreen draft={profileDraft} onDraftChange={setProfileDraft} onBack={goBack} onContinue={nextProfile => { completeProfile(nextProfile); setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goTo("discover-people"); return true; }} />;
+        return <CompleteProfileScreen draft={profileDraft} onDraftChange={setProfileDraft} onBack={goBack} onContinue={async nextProfile => { await completeProfile(nextProfile); setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goTo("discover-people"); return true; }} />;
       case "discover-people":
         return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={toggleFollowing} onViewProfile={person => openPublicProfile(person.name)} />;
       case "home":
