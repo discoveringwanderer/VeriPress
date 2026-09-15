@@ -1516,14 +1516,17 @@ function AppContent() {
     goTo("article-detail");
   }
 
-  function openPublicProfile(name: string) {
-    // First try to find a registered user whose username or display name matches — this gives
-    // us the canonical username so the article filter and follow lookup are always correct.
-    const registeredMatch = registeredUsers.find(
-      user =>
-        user.username.toLowerCase() === name.toLowerCase() ||
-        (user.name && user.name.toLowerCase() === name.toLowerCase()) ||
-        `@${user.username}`.toLowerCase() === name.toLowerCase()
+  function openPublicProfile(nameOrHandle: string) {
+    // Accept either a display name or @handle
+    const isHandle = nameOrHandle.startsWith("@");
+    const normalizedHandle = isHandle ? nameOrHandle.toLowerCase() : null;
+    const normalizedName = nameOrHandle.toLowerCase();
+
+    // 1. Try registered users — match by handle, username, or display name
+    const registeredMatch = registeredUsers.find(user =>
+      `@${user.username}`.toLowerCase() === normalizedHandle ||
+      user.username.toLowerCase() === normalizedName ||
+      (user.name && user.name.toLowerCase() === normalizedName)
     );
     if (registeredMatch) {
       setProfilePerson({
@@ -1536,18 +1539,31 @@ function AppContent() {
       return;
     }
 
-    // Fall back to SUGGESTED_PEOPLE for non-registered handles shown during onboarding.
-    const suggested = SUGGESTED_PEOPLE.find(person => person.name === name || person.handle === name);
+    // 2. If we have a @handle, build the person directly from it even if not in registeredUsers
+    //    (user exists in accounts but hasn't completed profile yet)
+    if (isHandle) {
+      const rawUsername = nameOrHandle.replace(/^@/, "");
+      setProfilePerson({
+        name: rawUsername,
+        handle: nameOrHandle,
+        avatar: null,
+        following: Boolean(following[nameOrHandle.toLowerCase()]),
+      });
+      goTo("public-profile");
+      return;
+    }
+
+    // 3. Fall back to SUGGESTED_PEOPLE
+    const suggested = SUGGESTED_PEOPLE.find(person => person.name === nameOrHandle || person.handle === nameOrHandle);
     if (suggested) {
       setProfilePerson(suggested);
       goTo("public-profile");
       return;
     }
 
-    // Last resort: derive handle from a matching article's ownerUsername (most accurate)
-    // or from the author display name string.
-    const userArticle = publishedArticles.find(item => item.author === name || item.ownerUsername === name);
-    const staticArticle = ARTICLES.find(item => item.author === name);
+    // 4. Last resort: derive from a matching article
+    const userArticle = publishedArticles.find(item => item.author === nameOrHandle || item.ownerUsername === nameOrHandle);
+    const staticArticle = ARTICLES.find(item => item.author === nameOrHandle);
     const source = userArticle ?? staticArticle;
     if (source) {
       const handle = source.ownerUsername
@@ -1585,7 +1601,7 @@ function AppContent() {
       case "complete-profile":
         return <CompleteProfileScreen draft={profileDraft} onDraftChange={setProfileDraft} onBack={goBack} onContinue={async nextProfile => { await completeProfile(nextProfile); setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goTo("discover-people"); return true; }} />;
       case "discover-people":
-        return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={toggleFollowing} onViewProfile={person => openPublicProfile(person.name)} />;
+        return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={toggleFollowing} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "home":
         return <HomeScreen onNavigate={replace} onArticle={openArticle} onAuthor={openPublicProfile} userArticles={userArticles} />;
       case "discover":
@@ -1597,15 +1613,15 @@ function AppContent() {
       case "new-articles":
         return <DiscoverListScreen kind="new" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} />;
       case "following-list":
-        return <ConnectionsScreen type="following" onBack={goBack} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} followerHandles={followerHandles} onViewProfile={person => openPublicProfile(person.name)} />;
+        return <ConnectionsScreen type="following" onBack={goBack} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} followerHandles={followerHandles} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "followers-list":
-        return <ConnectionsScreen type="followers" onBack={goBack} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} followerHandles={followerHandles} onViewProfile={person => openPublicProfile(person.name)} />;
+        return <ConnectionsScreen type="followers" onBack={goBack} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} followerHandles={followerHandles} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "profile-articles":
         return <ProfileArticlesScreen articles={userArticles} onBack={goBack} onArticle={openArticle} />;
       case "my-articles":
         return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); replace("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); replace("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} />;
       case "profile":
-        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={() => { logout(); replace("auth-options"); }} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.name)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
+        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={() => { logout(); replace("auth-options"); }} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
       case "edit-profile":
         return <EditProfileScreen profile={profile} onBack={goBack} onSave={completeProfile} />;
       case "create-article":
