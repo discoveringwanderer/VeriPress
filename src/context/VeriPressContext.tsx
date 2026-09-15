@@ -200,31 +200,10 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     const normalizedPassword = password.trim();
     const matched = await api.getAccountByIdentifier(identifier);
 
-    let matchedAccount: Account | null = null;
+    // Strict check — must match both identifier AND password exactly
+    if (!matched || matched.password !== normalizedPassword) return false;
 
-    if (matched && matched.password === normalizedPassword) {
-      matchedAccount = matched;
-    } else {
-      // Fallback: orphaned registered user with no account record
-      const freshUsers = await api.getRegisteredUsers();
-      const orphan = freshUsers.find(
-        (u) => u.username.toLowerCase() === identifier.trim().toLowerCase()
-      );
-      if (orphan) {
-        const existing = await api.getAccounts();
-        if (!existing.some((a) => a.username.toLowerCase() === orphan.username.toLowerCase())) {
-          const recovered: Account = {
-            username: orphan.username,
-            email: `${orphan.username}@veripress.local`,
-            password: normalizedPassword,
-          };
-          await api.saveAccount(recovered);
-          matchedAccount = recovered;
-        }
-      }
-    }
-
-    if (!matchedAccount) return false;
+    const matchedAccount = matched;
 
     const [savedProfile, userFollowing, userDrafts, allArticles, allRegistered, allFollowingByUser, allFollowers] =
       await Promise.all([
