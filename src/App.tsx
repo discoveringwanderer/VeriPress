@@ -1042,8 +1042,9 @@ function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, use
           <div className="flex items-center gap-3 mb-5">
             <PersonAvatar src={profile.avatar} name={profile.name || "Profile"} className="w-16 h-16 rounded-full object-cover" />
             <div className="flex-1">
-              <h3 className="font-bold text-gray-900 text-base">{profile.name || "Your Profile"}</h3>
+              <h3 className="font-bold text-gray-900 text-base">{profile.name || profile.username || "Your Profile"}</h3>
               <p className="text-gray-400 text-sm">@{profile.username || "username"}</p>
+              {profile.dob && <p className="text-gray-400 text-xs mt-0.5">{profile.dob}</p>}
               {profile.description && <p className="text-gray-500 text-xs mt-1 line-clamp-2">{profile.description}</p>}
             </div>
             <button
@@ -1221,12 +1222,13 @@ function PublicProfileScreen({ person, articles, followingPeople, followerPeople
   );
 }
 
-function EditProfileScreen({ profile, onBack, onSave }: { profile: UserProfile; onBack: () => void; onSave: (profile: Partial<UserProfile>) => void }) {
+function EditProfileScreen({ profile, account, onBack, onSave }: { profile: UserProfile; account: { email: string } | null; onBack: () => void; onSave: (profile: Partial<UserProfile>) => void }) {
   const [name, setName] = useState(profile.name);
   const [username, setUsername] = useState(profile.username);
   const [avatar, setAvatar] = useState<string | null>(profile.avatar);
   const [desc, setDesc] = useState(profile.description);
-  const [email, setEmail] = useState("samsmith01@gmail.com");
+  const [email, setEmail] = useState(account?.email ?? "");
+  const [dob, setDob] = useState(profile.dob ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
@@ -1254,7 +1256,7 @@ function EditProfileScreen({ profile, onBack, onSave }: { profile: UserProfile; 
           </div>
         </div>
 
-        <TextInput label="Display Name" placeholder="Display Name" value={name} onChange={setName} />
+        <TextInput label="Full Name" placeholder="Full Name" value={name} onChange={setName} />
         <TextInput label="Username" placeholder="Username" value={username} onChange={setUsername} />
 
         <div className="mb-5">
@@ -1269,9 +1271,32 @@ function EditProfileScreen({ profile, onBack, onSave }: { profile: UserProfile; 
         </div>
 
         <TextInput label="Email Address" placeholder="Email" value={email} onChange={setEmail} type="email" />
+
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
+          <div className="relative border-b border-gray-300">
+            <input
+              type="date"
+              value={dob}
+              onChange={e => setDob(e.target.value)}
+              className="w-full bg-transparent py-2 text-sm text-gray-900"
+            />
+          </div>
+        </div>
       </div>
       <div className="px-4 pb-10 pt-4">
-        <PrimaryButton label="Save Changes" onClick={() => { onSave({ name: name.trim(), username: username.trim(), avatar, description: desc.trim() }); onBack(); }} />
+        <PrimaryButton label="Save Changes" onClick={() => {
+          onSave({
+            name: name.trim(),
+            username: username.trim(),
+            avatar,
+            description: desc.trim(),
+            dob: dob.trim(),
+            phone: profile.phone,
+            gender: profile.gender,
+          });
+          onBack();
+        }} />
       </div>
     </div>
   );
@@ -1623,7 +1648,7 @@ function AppContent() {
       case "profile":
         return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={() => { logout(); replace("auth-options"); }} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
       case "edit-profile":
-        return <EditProfileScreen profile={profile} onBack={goBack} onSave={completeProfile} />;
+        return <EditProfileScreen profile={profile} account={account} onBack={goBack} onSave={completeProfile} />;
       case "create-article":
         return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); replace("my-articles"); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={(article, id) => { publishArticle(article, id); setEditingArticle(null); replace("my-articles"); }} />;
       case "article-detail":
