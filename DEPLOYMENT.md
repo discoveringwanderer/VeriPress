@@ -34,8 +34,9 @@ After Vercel gives you a deployment URL:
    `https://*-your-team.vercel.app/**`.
 4. Ensure email confirmation is enabled if users should verify their email.
 
-The `accounts.auth_user_id` migration must be applied before production
-sign-ups. See [the Supabase migration instructions](./supabase/README.md).
+Apply the Supabase migrations documented in
+[the Supabase migration instructions](./supabase/README.md) before deploying
+sign-up and article archiving features.
 
 ## Redeploy after configuration
 

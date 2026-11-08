@@ -22,6 +22,18 @@ export type StoredArticle = {
   body: string;
   category: string;
   ownerUsername?: string;
+  archived?: boolean;
+};
+
+export type PersonalBackup = {
+  format: "veripress-backup";
+  version: 1;
+  exportedAt: string;
+  username: string;
+  profile: UserProfile;
+  articles: StoredArticle[];
+  drafts: StoredArticle[];
+  following: string[];
 };
 
 export type FollowingMap = Record<string, boolean>;
@@ -212,6 +224,42 @@ export async function saveArticle(article: StoredArticle): Promise<void> {
   throwOnSupabaseError(error);
 }
 
+export async function mergeBackupArticles(
+  username: string,
+  articles: StoredArticle[],
+  table: "articles" | "drafts"
+): Promise<void> {
+  const backupIds = articles.map((article) => `backup-${username.toLowerCase()}-${article.id}`);
+  const ids = [...articles.map((article) => article.id), ...backupIds];
+  const existingRows = ids.length
+    ? await supabase.from(table).select("id, owner_username").in("id", ids)
+    : { data: [], error: null };
+  throwOnSupabaseError(existingRows.error);
+
+  const existingOwners = new Map(
+    (existingRows.data ?? []).map((row) => [row.id as string, row.owner_username as string])
+  );
+  for (const article of articles) {
+    const backupId = `backup-${username.toLowerCase()}-${article.id}`;
+    const originalOwner = existingOwners.get(article.id);
+    const backupOwner = existingOwners.get(backupId);
+    const isOwnedByCurrentUser = (owner: string | undefined) =>
+      owner?.toLowerCase() === username.toLowerCase();
+    const id = isOwnedByCurrentUser(originalOwner)
+      ? article.id
+      : isOwnedByCurrentUser(backupOwner)
+        ? backupId
+        : existingOwners.has(article.id) || existingOwners.has(backupId)
+          ? `${table === "articles" ? "user" : "draft"}-${crypto.randomUUID()}`
+          : backupId;
+    const restoredArticle = { ...article, id, ownerUsername: username };
+    const { error } = await supabase
+      .from(table)
+      .upsert(articleToDb(restoredArticle, table === "articles"), { onConflict: "id" });
+    throwOnSupabaseError(error);
+  }
+}
+
 export async function deleteArticle(id: string): Promise<void> {
   const { error } = await supabase.from("articles").delete().eq("id", id);
   throwOnSupabaseError(error);
@@ -244,7 +292,7 @@ export async function getDrafts(ownerUsername: string): Promise<StoredArticle[]>
 }
 
 export async function saveDraft(article: StoredArticle): Promise<void> {
-  const { error } = await supabase.from("drafts").upsert(articleToDb(article), { onConflict: "id" });
+  const { error } = await supabase.from("drafts").upsert(articleToDb(article, false), { onConflict: "id" });
   throwOnSupabaseError(error);
 }
 
@@ -376,10 +424,11 @@ function dbToArticle(row: Record<string, unknown>): StoredArticle {
         )
       : "",
     ownerUsername: row.owner_username as string,
+    archived: row.archived === true,
   };
 }
 
-function articleToDb(article: StoredArticle): Record<string, unknown> {
+function articleToDb(article: StoredArticle, includeArchive = true): Record<string, unknown> {
   return {
     id: article.id,
     title: article.title,
@@ -389,6 +438,7 @@ function articleToDb(article: StoredArticle): Record<string, unknown> {
     author: article.author,
     avatar: article.avatar ?? "",
     owner_username: article.ownerUsername ?? "",
+    ...(includeArchive ? { archived: article.archived ?? false } : {}),
   };
 }
 
