@@ -77,7 +77,7 @@ function readProfileImage(file: File, onLoad: (image: string) => void) {
 
 function BackArrow({ onPress }: { onPress: () => void }) {
   return (
-    <button onClick={onPress} className="p-1">
+    <button type="button" onClick={onPress} className="p-1" aria-label="Go back">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <path d="M15 18L9 12L15 6" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -1257,7 +1257,7 @@ function getFollowedPeople(following: Record<string, boolean>, registeredUsers: 
     });
 }
 
-function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections, onDataTools }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => Promise<void>; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void; onDataTools: () => void }) {
+function ProfileScreen({ onNavigate, onViewArticles, onEdit, onEditArticle, onDeleteArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections, onDataTools }: { onNavigate: (s: Screen) => void; onViewArticles: () => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => Promise<void>; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void; onDataTools: () => void }) {
   const followedPeople = getFollowedPeople(following, registeredUsers);
   const followingCount = Object.values(following).filter(Boolean).length;
   const selfHandle = profile.username ? `@${profile.username}` : "";
@@ -1333,7 +1333,7 @@ function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, use
               <p className="text-gray-400 text-xs mt-1">Publish your first article to build your profile.</p>
             </div>
           ) : userArticles.map(a => (
-            <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onPress={() => onNavigate("profile-articles")} onEdit={() => onEditArticle(a)} onDelete={() => onDeleteArticle(a)} />
+            <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onPress={onViewArticles} onEdit={() => onEditArticle(a)} onDelete={() => onDeleteArticle(a)} />
           ))}
         </div>
       </div>
@@ -1961,7 +1961,7 @@ function AppContent() {
   const renderScreen = () => {
     // Always bounce unauthenticated users away from protected screens
     if (!profile.username && PROTECTED.includes(screen)) {
-      return <AuthOptionsScreen onSignIn={() => replace("sign-in")} onSignUp={() => replace("create-account")} />;
+      return <AuthOptionsScreen onSignIn={() => goTo("sign-in")} onSignUp={() => goTo("create-account")} />;
     }
 
     switch (screen) {
@@ -1978,7 +1978,7 @@ function AppContent() {
       case "complete-profile":
         return <CompleteProfileScreen draft={profileDraft} onDraftChange={setProfileDraft} onBack={goBack} onContinue={async nextProfile => { await completeProfile(nextProfile); setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); if (signupNeedsConfirmation) replace("signup-success"); else goTo("discover-people"); return true; }} />;
       case "signup-success":
-        return <SignupConfirmationScreen email={account?.email ?? ""} onBackToSignIn={() => replace("auth-options")} />;
+        return <SignupConfirmationScreen email={account?.email ?? ""} onBackToSignIn={() => replace("sign-in")} />;
       case "discover-people":
         return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={handleToggleFollowing} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "home":
@@ -1998,15 +1998,15 @@ function AppContent() {
       case "profile-articles":
         return <ProfileArticlesScreen articles={userArticles} onBack={goBack} onArticle={openArticle} />;
       case "my-articles":
-        return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); replace("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); replace("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} onArchive={handleArchiveArticle} onRestore={handleRestoreArticle} />;
+        return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); goTo("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); goTo("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} onArchive={handleArchiveArticle} onRestore={handleRestoreArticle} />;
       case "profile":
-        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={handleLogout} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} onDataTools={() => goTo("data-tools")} />;
+        return <ProfileScreen onNavigate={replace} onViewArticles={() => goTo("profile-articles")} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); goTo("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={handleLogout} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} onDataTools={() => goTo("data-tools")} />;
       case "edit-profile":
         return <EditProfileScreen profile={profile} account={account} onBack={goBack} onSave={completeProfile} />;
       case "data-tools":
         return <DataToolsScreen profile={profile} publishedArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} followingCount={Object.values(following).filter(Boolean).length} followerCount={followers[`@${profile.username}`.toLowerCase()] ?? 0} onBack={goBack} onCreateBackup={createBackup} onRestoreBackup={restoreBackup} />;
       case "create-article":
-        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); replace("my-articles"); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={async (article, id) => { await publishArticle(article, id); setEditingArticle(null); replace("my-articles"); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); replace("my-articles"); }} />;
+        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); goBack(); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={async (article, id) => { await publishArticle(article, id); setEditingArticle(null); goBack(); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); goBack(); }} />;
       case "article-detail":
         {
           const article = [...publishedArticles, ...ARTICLES].find(item => item.id === articleId) ?? ARTICLES[1];
