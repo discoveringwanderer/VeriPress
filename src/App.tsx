@@ -2022,15 +2022,8 @@ function AppContent() {
   };
 
   return (
-    <div className="h-full min-h-[100dvh] w-full flex items-center justify-center bg-gray-200" style={{ background: "#e5e7eb" }}>
-      {/* Phone frame */}
-      <div
-        className="relative flex h-[100dvh] max-h-[844px] w-full max-w-[390px] flex-col overflow-hidden shadow-2xl"
-        style={{
-          borderRadius: "min(48px, 6vw)",
-          background: "white",
-        }}
-      >
+    <div className="app-viewport">
+      <div className="app-frame">
         {renderScreen()}
         {actionError && (
           <div role="alert" className="absolute inset-x-3 top-10 z-40 flex items-start justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 shadow">
