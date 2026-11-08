@@ -702,26 +702,61 @@ function DataToolsScreen({ profile, publishedArticles, archivedArticles, drafts,
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+
+  function downloadFile(file: File) {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
 
   async function downloadBackup() {
     setBusy(true);
     setMessage("");
     setError("");
+    setBackupFile(null);
     try {
       const backup = await onCreateBackup();
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
       if (blob.size > 50 * 1024 * 1024) throw new Error("This backup is larger than 50 MB. Remove large cover images and try again.");
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `veripress-backup-${profile.username}-${new Date().toISOString().slice(0, 10)}.json`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setMessage("Your personal backup has been downloaded.");
+      const file = new File(
+        [blob],
+        `veripress-backup-${profile.username}-${new Date().toISOString().slice(0, 10)}.json`,
+        { type: "application/json" }
+      );
+      setBackupFile(file);
+      if (!navigator.canShare?.({ files: [file] })) {
+        downloadFile(file);
+        setMessage("Backup file created and download started. Check your browser's Downloads.");
+      } else {
+        setMessage("Backup file is ready. Choose Save or share backup file, then select Save to Files or another destination.");
+      }
     } catch (backupError) {
       setError(backupError instanceof Error ? backupError.message : "Unable to create your backup.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveOrShareBackup() {
+    if (!backupFile) return;
+    setError("");
+    try {
+      if (navigator.canShare?.({ files: [backupFile] }) && navigator.share) {
+        await navigator.share({ files: [backupFile], title: "VeriPress backup" });
+        setMessage("Backup shared. Check the destination you selected.");
+        return;
+      }
+      downloadFile(backupFile);
+      setMessage("Backup download started. Check your browser's Downloads.");
+    } catch (shareError) {
+      if (shareError instanceof DOMException && shareError.name === "AbortError") return;
+      setError(shareError instanceof Error ? shareError.message : "Unable to save or share the backup file.");
     }
   }
 
@@ -780,7 +815,12 @@ function DataToolsScreen({ profile, publishedArticles, archivedArticles, drafts,
         <section className="rounded-2xl border border-gray-200 p-4">
           <h3 className="mb-1 font-semibold text-gray-900">Personal backup</h3>
           <p className="mb-4 text-xs leading-relaxed text-gray-500">Export your profile, articles, drafts, archived articles, and following list as a private JSON file.</p>
-          <PrimaryButton label={busy ? "Working..." : "Download backup"} onClick={downloadBackup} disabled={busy} />
+          <PrimaryButton label={busy ? "Creating backup..." : "Create backup file"} onClick={downloadBackup} disabled={busy} />
+          {backupFile && (
+            <div className="mt-3">
+              <OutlineButton label="Save or share backup file" onClick={() => void saveOrShareBackup()} />
+            </div>
+          )}
         </section>
         <section className="rounded-2xl border border-gray-200 p-4">
           <h3 className="mb-1 font-semibold text-gray-900">Restore backup</h3>
