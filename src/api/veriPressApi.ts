@@ -1,5 +1,17 @@
 import { supabase } from "../lib/supabase";
 
+function throwOnSupabaseError(error: { message: string } | null): void {
+  if (error) throw new Error(error.message);
+}
+
+function isMissingAuthUserId(error: { code?: string; message: string } | null): boolean {
+  return Boolean(error && (
+    error.code === "42703" ||
+    error.code === "PGRST204" ||
+    error.message.includes("accounts.auth_user_id")
+  ));
+}
+
 export type StoredArticle = {
   id: string;
   title: string;
@@ -14,7 +26,7 @@ export type StoredArticle = {
 
 export type FollowingMap = Record<string, boolean>;
 export type FollowersMap = Record<string, number>;
-export type Account = { username: string; email: string; password: string };
+export type Account = { username: string; email: string; authUserId?: string | null };
 export type UserProfile = {
   name: string;
   username: string;
@@ -34,26 +46,91 @@ export type RegisteredUser = {
 // ── Accounts ────────────────────────────────────────────────────────────────
 
 export async function getAccounts(): Promise<Account[]> {
-  const { data } = await supabase.from("accounts").select("username, email, password");
-  return (data ?? []) as Account[];
+  const { data, error } = await supabase.from("accounts").select("username, email, auth_user_id");
+  if (isMissingAuthUserId(error)) {
+    const legacy = await supabase.from("accounts").select("username, email");
+    throwOnSupabaseError(legacy.error);
+    return (legacy.data ?? []).map((row) => ({ username: row.username, email: row.email }));
+  }
+  throwOnSupabaseError(error);
+  return (data ?? []).map((row) => ({
+    username: row.username,
+    email: row.email,
+    authUserId: row.auth_user_id,
+  }));
 }
 
 export async function saveAccount(account: Account): Promise<void> {
-  await supabase.from("accounts").upsert(
-    { username: account.username, email: account.email, password: account.password },
+  const { error } = await supabase.from("accounts").upsert(
+    {
+      username: account.username,
+      email: account.email,
+      auth_user_id: account.authUserId ?? null,
+    },
     { onConflict: "username" }
   );
+  if (isMissingAuthUserId(error)) {
+    const legacy = await supabase.from("accounts").upsert(
+      {
+        username: account.username,
+        email: account.email,
+        password: crypto.randomUUID(),
+      },
+      { onConflict: "username" }
+    );
+    throwOnSupabaseError(legacy.error);
+    return;
+  }
+  throwOnSupabaseError(error);
 }
 
 export async function getAccountByIdentifier(identifier: string): Promise<Account | null> {
   const lower = identifier.trim().toLowerCase();
+  const { data: usernameData, error: usernameError } = await supabase
+    .from("accounts")
+    .select("username, email, auth_user_id")
+    .ilike("username", lower)
+    .limit(1);
+  if (isMissingAuthUserId(usernameError)) {
+    const { data: legacyUsernameData, error: legacyUsernameError } = await supabase
+      .from("accounts")
+      .select("username, email")
+      .ilike("username", lower)
+      .limit(1);
+    throwOnSupabaseError(legacyUsernameError);
+    const { data: legacyEmailData, error: legacyEmailError } = legacyUsernameData?.length
+      ? { data: null, error: null }
+      : await supabase.from("accounts").select("username, email").ilike("email", lower).limit(1);
+    throwOnSupabaseError(legacyEmailError);
+    const row = legacyUsernameData?.[0] ?? legacyEmailData?.[0];
+    return row ? { username: row.username, email: row.email } : null;
+  }
+  throwOnSupabaseError(usernameError);
+  const row = usernameData?.[0];
+  if (row) return { username: row.username, email: row.email, authUserId: row.auth_user_id };
+
+  const { data: emailData, error: emailError } = await supabase
+    .from("accounts")
+    .select("username, email, auth_user_id")
+    .ilike("email", lower)
+    .limit(1);
+  throwOnSupabaseError(emailError);
+  const emailRow = emailData?.[0];
+  return emailRow
+    ? { username: emailRow.username, email: emailRow.email, authUserId: emailRow.auth_user_id }
+    : null;
+}
+
+export async function getAccountByAuthUserId(authUserId: string): Promise<Account | null> {
   const { data, error } = await supabase
     .from("accounts")
-    .select("username, email, password")
-    .or(`email.ilike.${lower},username.ilike.${lower}`)
+    .select("username, email, auth_user_id")
+    .eq("auth_user_id", authUserId)
     .limit(1);
-  if (error || !data || data.length === 0) return null;
-  return data[0] as Account;
+  if (isMissingAuthUserId(error)) return null;
+  throwOnSupabaseError(error);
+  const row = data?.[0];
+  return row ? { username: row.username, email: row.email, authUserId: row.auth_user_id } : null;
 }
 
 export async function renameAccountUsername(
@@ -64,15 +141,17 @@ export async function renameAccountUsername(
   const next = nextUsername.trim();
   if (!prev || !next.toLowerCase() || prev === next.toLowerCase()) return true;
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("accounts")
     .select("username")
     .ilike("username", next)
     .neq("username", previousUsername)
     .limit(1);
+  throwOnSupabaseError(existingError);
   if (existing && existing.length > 0) return false;
 
-  await supabase.from("accounts").update({ username: next }).ilike("username", previousUsername);
+  const { error } = await supabase.from("accounts").update({ username: next }).ilike("username", previousUsername);
+  throwOnSupabaseError(error);
   return true;
 }
 
@@ -85,7 +164,8 @@ export async function getProfileForUser(username: string): Promise<UserProfile |
     .select("*")
     .ilike("username", username)
     .limit(1);
-  if (error || !data || data.length === 0) return null;
+  throwOnSupabaseError(error);
+  if (!data || data.length === 0) return null;
   const row = data[0];
   return {
     username: row.username,
@@ -100,7 +180,7 @@ export async function getProfileForUser(username: string): Promise<UserProfile |
 
 export async function saveProfileForUser(username: string, profile: UserProfile): Promise<void> {
   if (!username) return;
-  await supabase.from("profiles").upsert(
+  const { error } = await supabase.from("profiles").upsert(
     {
       username,
       name: profile.name,
@@ -113,54 +193,75 @@ export async function saveProfileForUser(username: string, profile: UserProfile)
     },
     { onConflict: "username" }
   );
+  throwOnSupabaseError(error);
 }
 
 // ── Articles ────────────────────────────────────────────────────────────────
 
 export async function getUserArticles(): Promise<StoredArticle[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("articles")
     .select("*")
     .order("created_at", { ascending: false });
+  throwOnSupabaseError(error);
   return (data ?? []).map(dbToArticle);
 }
 
 export async function saveArticle(article: StoredArticle): Promise<void> {
-  await supabase.from("articles").upsert(articleToDb(article), { onConflict: "id" });
+  const { error } = await supabase.from("articles").upsert(articleToDb(article), { onConflict: "id" });
+  throwOnSupabaseError(error);
 }
 
 export async function deleteArticle(id: string): Promise<void> {
-  await supabase.from("articles").delete().eq("id", id);
+  const { error } = await supabase.from("articles").delete().eq("id", id);
+  throwOnSupabaseError(error);
+}
+
+export function subscribeToSocialUpdates(onChange: () => void): () => void {
+  const channel = supabase
+    .channel("veripress-social-updates")
+    .on("postgres_changes", { event: "*", schema: "public", table: "articles" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "following" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, onChange)
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
 
 export async function getDrafts(ownerUsername: string): Promise<StoredArticle[]> {
   if (!ownerUsername) return [];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("drafts")
     .select("*")
     .ilike("owner_username", ownerUsername)
     .order("created_at", { ascending: false });
+  throwOnSupabaseError(error);
   return (data ?? []).map(dbToArticle);
 }
 
 export async function saveDraft(article: StoredArticle): Promise<void> {
-  await supabase.from("drafts").upsert(articleToDb(article), { onConflict: "id" });
+  const { error } = await supabase.from("drafts").upsert(articleToDb(article), { onConflict: "id" });
+  throwOnSupabaseError(error);
 }
 
 export async function deleteDraft(id: string): Promise<void> {
-  await supabase.from("drafts").delete().eq("id", id);
+  const { error } = await supabase.from("drafts").delete().eq("id", id);
+  throwOnSupabaseError(error);
 }
 
 // ── Following ────────────────────────────────────────────────────────────────
 
 export async function getFollowingForUser(username: string): Promise<FollowingMap> {
   if (!username) return {};
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("following")
     .select("following_username")
     .ilike("follower_username", username);
+  throwOnSupabaseError(error);
   const map: FollowingMap = {};
   (data ?? []).forEach((row) => {
     map[`@${row.following_username}`.toLowerCase()] = true;
@@ -169,7 +270,8 @@ export async function getFollowingForUser(username: string): Promise<FollowingMa
 }
 
 export async function getFollowingByUser(): Promise<Record<string, FollowingMap>> {
-  const { data } = await supabase.from("following").select("follower_username, following_username");
+  const { data, error } = await supabase.from("following").select("follower_username, following_username");
+  throwOnSupabaseError(error);
   const result: Record<string, FollowingMap> = {};
   (data ?? []).forEach((row) => {
     const follower = row.follower_username.toLowerCase();
@@ -184,30 +286,34 @@ export async function followUser(followerUsername: string, followingUsername: st
   const follower = followerUsername.trim();
   const following = followingUsername.replace(/^@/, "").trim();
   // Resolve exact-case usernames from accounts to satisfy the foreign key
-  const { data: accounts } = await supabase
+  const { data: accounts, error: accountsError } = await supabase
     .from("accounts")
     .select("username")
     .or(`username.ilike.${follower},username.ilike.${following}`);
+  throwOnSupabaseError(accountsError);
   const exactFollower = accounts?.find(a => a.username.toLowerCase() === follower.toLowerCase())?.username ?? follower;
   const exactFollowing = accounts?.find(a => a.username.toLowerCase() === following.toLowerCase())?.username ?? following;
-  await supabase.from("following").upsert(
+  const { error } = await supabase.from("following").upsert(
     { follower_username: exactFollower, following_username: exactFollowing },
     { onConflict: "follower_username,following_username" }
   );
+  throwOnSupabaseError(error);
 }
 
 export async function unfollowUser(followerUsername: string, followingUsername: string): Promise<void> {
   const follower = followerUsername.trim();
   const following = followingUsername.replace(/^@/, "").trim();
-  await supabase
+  const { error } = await supabase
     .from("following")
     .delete()
     .ilike("follower_username", follower)
     .ilike("following_username", following);
+  throwOnSupabaseError(error);
 }
 
 export async function getFollowerCounts(): Promise<FollowersMap> {
-  const { data } = await supabase.from("following").select("following_username");
+  const { data, error } = await supabase.from("following").select("following_username");
+  throwOnSupabaseError(error);
   const counts: FollowersMap = {};
   (data ?? []).forEach((row) => {
     const handle = `@${row.following_username}`.toLowerCase();
@@ -225,6 +331,8 @@ export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
     supabase.from("profiles").select("username, name, avatar, description"),
     supabase.from("accounts").select("username"),
   ]);
+  throwOnSupabaseError(profilesRes.error);
+  throwOnSupabaseError(accountsRes.error);
 
   const profileMap = new Map<string, RegisteredUser>();
   (profilesRes.data ?? []).forEach((row) => {

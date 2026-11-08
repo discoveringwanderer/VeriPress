@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import type { UserProfile } from "./api/veriPressApi";
+import type { RegisteredUser, UserProfile } from "./api/veriPressApi";
 import { veriPressApi } from "./api/veriPressApi";
 import { VeriPressProvider } from "./context/VeriPressContext";
 import { useAppRouter } from "./hooks/useAppRouter";
@@ -38,6 +38,7 @@ type Article = {
   image: string;
   body: string;
   category: string;
+  ownerUsername?: string;
 };
 
 type AccountDraft = { username: string; email: string; password: string; confirm: string };
@@ -399,12 +400,17 @@ function SignInScreen({ onBack, onSignIn }: { onBack: () => void; onSignIn: (ide
       return;
     }
     setSigningIn(true);
-    const valid = await onSignIn(email, password);
-    setSigningIn(false);
-    if (!valid) {
-      setError("This account was not recognized. Check your credentials or sign up first.");
-    } else {
-      setError("");
+    try {
+      const valid = await onSignIn(email, password);
+      if (!valid) {
+        setError("This account was not recognized. Check your credentials or sign up first.");
+      } else {
+        setError("");
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to sign in. Try again.");
+    } finally {
+      setSigningIn(false);
     }
   }
 
@@ -457,12 +463,16 @@ function CreateAccountScreen({ draft, onDraftChange, onBack, onContinue }: { dra
     if (!/^\S+@\S+\.\S+$/.test(draft.email)) return setError("Enter a valid email address.");
     if (draft.password.length < 6) return setError("Password must be at least 6 characters.");
     if (draft.password !== draft.confirm) return setError("Passwords do not match.");
-    const result = await onContinue({ username: draft.username.trim(), email: draft.email.trim(), password: draft.password });
-    if (result !== "created") {
-      setError(result === "username-exists" ? "That username is already in use." : result === "email-exists" ? "That email is already registered." : "An account already exists. Sign in with that account.");
-      return;
+    try {
+      const result = await onContinue({ username: draft.username.trim(), email: draft.email.trim(), password: draft.password });
+      if (result !== "created") {
+        setError(result === "username-exists" ? "That username is already in use." : result === "email-exists" ? "That email is already registered." : "An account already exists. Sign in with that account.");
+        return;
+      }
+      setError("");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to create your account. Try again.");
     }
-    setError("");
   }
 
   return (
@@ -519,12 +529,16 @@ function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { d
       setError("Complete all profile fields before continuing.");
       return;
     }
-    const ok = await onContinue({ name: draft.name.trim(), phone: draft.phone.trim(), gender: draft.gender.trim(), dob: draft.dob.trim(), avatar: draft.avatar, description: draft.description.trim() });
-    if (!ok) {
-      setError("Please check your profile details.");
-      return;
+    try {
+      const ok = await onContinue({ name: draft.name.trim(), phone: draft.phone.trim(), gender: draft.gender.trim(), dob: draft.dob.trim(), avatar: draft.avatar, description: draft.description.trim() });
+      if (!ok) {
+        setError("Please check your profile details.");
+        return;
+      }
+      setError("");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to save your profile. Try again.");
     }
-    setError("");
   }
 
   return (
@@ -598,6 +612,22 @@ function CompleteProfileScreen({ draft, onDraftChange, onBack, onContinue }: { d
       {error && <p className="px-6 text-sm text-red-500 mb-2">{error}</p>}
       <div className="px-6 pb-10">
         <PrimaryButton label="Continue" onClick={submit} />
+      </div>
+    </div>
+  );
+}
+
+function SignupConfirmationScreen({ email, onBackToSignIn }: { email: string; onBackToSignIn: () => void }) {
+  return (
+    <div className="flex h-full flex-col bg-white">
+      <StatusBar />
+      <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+        <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 text-3xl" aria-hidden="true">✉</div>
+        <h2 className="mb-2 text-2xl font-bold text-gray-900">Profile created</h2>
+        <p className="mb-8 text-sm leading-relaxed text-gray-500">
+          Your profile is ready. Check <strong className="text-gray-700">{email}</strong> and confirm your email before signing in.
+        </p>
+        <PrimaryButton label="Back to sign in" onClick={onBackToSignIn} />
       </div>
     </div>
   );
@@ -719,7 +749,11 @@ const ARTICLES: Article[] = [
   { id: "5", title: "The Digital Habits We Should Leave Behind", author: "Sam Smith", avatar: AVATAR_SAM, time: "5 mins ago", image: IMG_WRITING, body: "Our relationship with technology has grown complicated. What started as tools to make life easier have, in many cases, become sources of anxiety, distraction, and compulsive behavior.\n\nScrolling through social media before bed disrupts sleep patterns. Checking email first thing in the morning hijacks your morning focus. Multitasking across multiple screens reduces the quality of everything you're doing.\n\nThe good news is that awareness is the first step. Small intentional changes — like keeping your phone out of the bedroom, scheduling email check-ins rather than monitoring constantly, and designating tech-free hours — can dramatically improve your relationship with digital tools.", category: "Technology" },
 ];
 
-function HomeScreen({ onNavigate, onArticle, onAuthor, userArticles }: { onNavigate: (s: Screen) => void; onArticle: (id: string) => void; onAuthor: (name: string) => void; userArticles: Article[] }) {
+function HomeScreen({ onNavigate, onArticle, onAuthor, userArticles, publishedArticles }: { onNavigate: (s: Screen) => void; onArticle: (id: string) => void; onAuthor: (name: string) => void; userArticles: Article[]; publishedArticles: Article[] }) {
+  const recentArticles = [...publishedArticles, ...ARTICLES]
+    .filter((article, index, articles) => articles.findIndex(item => item.id === article.id) === index)
+    .slice(0, 2);
+
   return (
     <div className="flex flex-col h-full bg-white">
       <StatusBar />
@@ -752,8 +786,8 @@ function HomeScreen({ onNavigate, onArticle, onAuthor, userArticles }: { onNavig
         <div className="px-4 mb-5">
           <h3 className="font-bold text-gray-900 mb-3">Recent Articles</h3>
           <div className="grid grid-cols-2 gap-3">
-            {ARTICLES.slice(0, 2).map(a => (
-              <ArticleCard key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} onPress={() => onArticle(a.id)} onAuthor={() => onAuthor(a.author)} />
+            {recentArticles.map(a => (
+              <ArticleCard key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} onPress={() => onArticle(a.id)} onAuthor={() => onAuthor(a.ownerUsername ? `@${a.ownerUsername}` : a.author)} />
             ))}
           </div>
         </div>
@@ -786,6 +820,8 @@ function HomeScreen({ onNavigate, onArticle, onAuthor, userArticles }: { onNavig
 function DiscoverScreen({ onNavigate, onOpenList, onArticle, onAuthor, publishedArticles, registeredWriters }: { onNavigate: (s: Screen) => void; onOpenList: (s: Screen) => void; onArticle: (id: string) => void; onAuthor: (name: string) => void; publishedArticles: Article[]; registeredWriters: Person[] }) {
   const [search, setSearch] = useState("");
   const searchTerm = search.trim().toLowerCase();
+  const visibleArticles = [...publishedArticles, ...ARTICLES]
+    .filter((article, index, articles) => articles.findIndex(item => item.id === article.id) === index);
   const searchableArticles = [...publishedArticles, ...ARTICLES].filter(article => {
     if (!searchTerm) return false;
     return `${article.title} ${article.author} ${article.category}`.toLowerCase().includes(searchTerm);
@@ -824,7 +860,7 @@ function DiscoverScreen({ onNavigate, onOpenList, onArticle, onAuthor, published
                       <p className="text-xs font-semibold text-gray-500 mb-2">Writers</p>
                       <div className="space-y-1">
                         {searchableWriters.map(writer => (
-                          <button key={"handle" in writer ? writer.handle : writer.name} onClick={() => onAuthor(writer.handle)} className="flex items-center gap-3 w-full py-2 text-left">
+                          <button key={"handle" in writer ? writer.handle : writer.name} onClick={() => onAuthor("handle" in writer ? writer.handle : writer.name)} className="flex items-center gap-3 w-full py-2 text-left">
                             <PersonAvatar src={writer.avatar} name={writer.name} className="w-10 h-10 rounded-full object-cover" />
                             <span className="font-semibold text-sm text-gray-900">{writer.name}</span>
                             {"handle" in writer && <span className="text-xs text-gray-400">{writer.handle}</span>}
@@ -848,12 +884,12 @@ function DiscoverScreen({ onNavigate, onOpenList, onArticle, onAuthor, published
 
           {/* Most Popular */}
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-900">Most Popular</h3>
-            <button onClick={() => onOpenList("popular-articles")} className="text-xs font-medium px-2 py-1" style={{ color: "#1B2B6B" }} aria-label="Show most popular articles">→</button>
+            <h3 className="font-bold text-gray-900">Community Articles</h3>
+            <button onClick={() => onOpenList("popular-articles")} className="text-xs font-medium px-2 py-1" style={{ color: "#1B2B6B" }} aria-label="Show community articles">→</button>
           </div>
           <div className="grid grid-cols-2 gap-3 mb-5">
-            {ARTICLES.slice(0, 2).map(a => (
-              <ArticleCard key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} onPress={() => onArticle(a.id)} onAuthor={() => onAuthor(a.author)} />
+            {visibleArticles.slice(0, 2).map(a => (
+              <ArticleCard key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} onPress={() => onArticle(a.id)} onAuthor={() => onAuthor(a.ownerUsername ? `@${a.ownerUsername}` : a.author)} />
             ))}
           </div>
 
@@ -879,7 +915,7 @@ function DiscoverScreen({ onNavigate, onOpenList, onArticle, onAuthor, published
             <button onClick={() => onOpenList("new-articles")} className="text-xs font-medium px-2 py-1" style={{ color: "#1B2B6B" }} aria-label="Show new articles">→</button>
           </div>
           <div className="space-y-0">
-            {ARTICLES.slice(2).map(a => (
+            {visibleArticles.slice(2).map(a => (
               <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} onPress={() => onArticle(a.id)} />
             ))}
           </div>
@@ -890,9 +926,11 @@ function DiscoverScreen({ onNavigate, onOpenList, onArticle, onAuthor, published
   );
 }
 
-function DiscoverListScreen({ kind, onBack, onArticle, onAuthor }: { kind: "popular" | "writers" | "new"; onBack: () => void; onArticle: (id: string) => void; onAuthor: (name: string) => void }) {
-  const title = kind === "writers" ? "Top Writers" : kind === "new" ? "New Articles" : "Most Popular";
-  const articles = kind === "new" ? ARTICLES.slice(2) : kind === "popular" ? ARTICLES : [];
+function DiscoverListScreen({ kind, onBack, onArticle, onAuthor, publishedArticles }: { kind: "popular" | "writers" | "new"; onBack: () => void; onArticle: (id: string) => void; onAuthor: (name: string) => void; publishedArticles: Article[] }) {
+  const title = kind === "writers" ? "Top Writers" : kind === "new" ? "Latest Articles" : "Community Articles";
+  const allArticles = [...publishedArticles, ...ARTICLES]
+    .filter((article, index, items) => items.findIndex(item => item.id === article.id) === index);
+  const articles = kind === "writers" ? [] : allArticles;
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -980,15 +1018,31 @@ function MyArticlesScreen({ onNavigate, onArticle, userArticles, drafts, onCreat
   );
 }
 
-function DeleteArticleModal({ article, isDraft, onCancel, onConfirm }: { article: Article; isDraft: boolean; onCancel: () => void; onConfirm: () => void }) {
+function DeleteArticleModal({ article, isDraft, onCancel, onConfirm }: { article: Article; isDraft: boolean; onCancel: () => void; onConfirm: () => Promise<void> }) {
+  const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  async function confirmDelete() {
+    setDeleting(true);
+    setError("");
+    try {
+      await onConfirm();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete this article. Try again.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="absolute inset-0 flex items-end justify-center z-30" style={{ background: "rgba(0,0,0,0.3)" }}>
       <div className="bg-white rounded-t-3xl w-full px-6 py-8">
         <h3 className="font-bold text-xl text-gray-900 text-center mb-2">Delete {isDraft ? "Draft" : "Published Article"}</h3>
         <p className="text-gray-500 text-sm text-center mb-6">Are you sure you want to delete "{article.title}"?</p>
+        {error && <p className="text-sm text-red-500 text-center mb-4">{error}</p>}
         <div className="flex gap-3">
           <OutlineButton label="Cancel" onClick={onCancel} />
-          <PrimaryButton label="Delete" onClick={onConfirm} />
+          <PrimaryButton label={deleting ? "Deleting..." : "Delete"} onClick={confirmDelete} disabled={deleting} />
         </div>
       </div>
     </div>
@@ -1007,7 +1061,7 @@ function getFollowedPeople(following: Record<string, boolean>, registeredUsers: 
     if (!knownPeople.has(person.handle.toLowerCase())) knownPeople.set(person.handle.toLowerCase(), person);
   });
   ARTICLES.forEach(article => {
-    const handle = `@${article.author.toLowerCase().replaceAll(" ", "_")}`;
+    const handle = `@${article.author.toLowerCase().replace(/ /g, "_")}`;
     if (!knownPeople.has(handle)) {
       knownPeople.set(handle, { name: article.author, handle, avatar: article.avatar, following: false });
     }
@@ -1016,14 +1070,14 @@ function getFollowedPeople(following: Record<string, boolean>, registeredUsers: 
   return Object.entries(following)
     .filter(([, isFollowing]) => isFollowing)
     .map(([handle]) => knownPeople.get(handle.toLowerCase()) ?? {
-      name: handle.replace(/^@/, "").replaceAll("_", " "),
+      name: handle.replace(/^@/, "").replace(/_/g, " "),
       handle,
       avatar: null,
       following: true,
     });
 }
 
-function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => void; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void }) {
+function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => Promise<void>; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void }) {
   const followedPeople = getFollowedPeople(following, registeredUsers);
   const followingCount = Object.values(following).filter(Boolean).length;
   const selfHandle = profile.username ? `@${profile.username}` : "";
@@ -1222,13 +1276,14 @@ function PublicProfileScreen({ person, articles, followingPeople, followerPeople
   );
 }
 
-function EditProfileScreen({ profile, account, onBack, onSave }: { profile: UserProfile; account: { email: string } | null; onBack: () => void; onSave: (profile: Partial<UserProfile>) => void }) {
+function EditProfileScreen({ profile, account, onBack, onSave }: { profile: UserProfile; account: { email: string } | null; onBack: () => void; onSave: (profile: Partial<UserProfile>) => Promise<void> }) {
   const [name, setName] = useState(profile.name);
   const [username, setUsername] = useState(profile.username);
   const [avatar, setAvatar] = useState<string | null>(profile.avatar);
   const [desc, setDesc] = useState(profile.description);
-  const [email, setEmail] = useState(account?.email ?? "");
   const [dob, setDob] = useState(profile.dob ?? "");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Re-sync all fields if profile loads after this screen mounts
@@ -1240,9 +1295,30 @@ function EditProfileScreen({ profile, account, onBack, onSave }: { profile: User
     setDob(profile.dob ?? "");
   }, [profile.name, profile.username, profile.avatar, profile.description, profile.dob]);
 
-  useEffect(() => {
-    if (account?.email) setEmail(account.email);
-  }, [account?.email]);
+  async function saveProfile() {
+    if (!username.trim()) {
+      setError("Username cannot be empty.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({
+        name: name.trim(),
+        username: username.trim(),
+        avatar,
+        description: desc.trim(),
+        dob: dob.trim(),
+        phone: profile.phone,
+        gender: profile.gender,
+      });
+      onBack();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save your profile. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -1283,7 +1359,10 @@ function EditProfileScreen({ profile, account, onBack, onSave }: { profile: User
           />
         </div>
 
-        <TextInput label="Email Address" placeholder="Email" value={email} onChange={setEmail} type="email" />
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+          <p className="text-sm text-gray-500 py-2">{account?.email || "No email address"}</p>
+        </div>
 
         <div className="mb-5">
           <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
@@ -1297,53 +1376,86 @@ function EditProfileScreen({ profile, account, onBack, onSave }: { profile: User
           </div>
         </div>
       </div>
+      {error && <p className="px-4 text-sm text-red-500 mb-2">{error}</p>}
       <div className="px-4 pb-10 pt-4">
-        <PrimaryButton label="Save Changes" onClick={() => {
-          onSave({
-            name: name.trim(),
-            username: username.trim(),
-            avatar,
-            description: desc.trim(),
-            dob: dob.trim(),
-            phone: profile.phone,
-            gender: profile.gender,
-          });
-          onBack();
-        }} />
+        <PrimaryButton label={saving ? "Saving..." : "Save Changes"} onClick={saveProfile} disabled={saving} />
       </div>
     </div>
   );
 }
 
-function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSaveDraft }: { article?: Article; isDraft?: boolean; onBack: () => void; onPublish: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => void; onSaveDraft: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => void }) {
+function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSaveDraft, onDelete }: { article?: Article; isDraft?: boolean; onBack: () => void; onPublish: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => Promise<void>; onSaveDraft: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => Promise<void>; onDelete: () => Promise<void> }) {
   const [title, setTitle] = useState(article?.title ?? "");
   const [body, setBody] = useState(article?.body ?? "");
   const [coverImage, setCoverImage] = useState<string | null>(article?.image ?? null);
   const [showDelete, setShowDelete] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const filled = Boolean(title.trim() && body.trim());
   const draft = { title, body, category: "My Story", image: coverImage ?? "" };
 
-  function saveDraft() {
-    if (!filled) return;
-    onSaveDraft(draft, article?.id);
-    setDraftSaved(true);
+  async function saveDraft(): Promise<boolean> {
+    if (!filled || saving) return false;
+    setSaving(true);
+    setError("");
+    try {
+      await onSaveDraft(draft, article?.id);
+      setDraftSaved(true);
+      return true;
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save this draft. Try again.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function closeEditor() {
+    if (filled && !draftSaved && !(await saveDraft())) return;
+    onBack();
+  }
+
+  async function publishArticle() {
+    if (!filled || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onPublish(draft, article?.id);
+    } catch (publishError) {
+      setError(publishError instanceof Error ? publishError.message : "Unable to publish this article. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteArticle() {
+    setSaving(true);
+    setError("");
+    try {
+      await onDelete();
+      setShowDelete(false);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete this article. Try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <div className="flex flex-col h-full bg-white relative">
       <StatusBar />
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
-        <button onClick={() => { if (filled && !draftSaved) saveDraft(); onBack(); }} className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-full" aria-label="Close article editor">
+        <button onClick={closeEditor} disabled={saving} className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-full disabled:opacity-50" aria-label="Close article editor">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
         <div className="flex items-center gap-2">
               {isDraft && <span className="text-xs text-gray-400">Draft</span>}
-              <button onClick={saveDraft} disabled={!filled} className="max-w-[150px] truncate text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-600 font-medium disabled:opacity-50" aria-label="Save article as draft">{draftSaved ? "Saved as draft" : "Save draft"}</button>
+              <button onClick={saveDraft} disabled={!filled || saving} className="max-w-[150px] truncate text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-600 font-medium disabled:opacity-50" aria-label="Save article as draft">{saving ? "Saving..." : draftSaved ? "Saved as draft" : "Save draft"}</button>
           {filled && (
             <button onClick={() => setShowDelete(true)} className="p-1">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1395,7 +1507,10 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
           const file = e.target.files?.[0];
           if (!file) return;
           const reader = new FileReader();
-          reader.onload = () => setCoverImage(typeof reader.result === "string" ? reader.result : null);
+          reader.onload = () => {
+            setCoverImage(typeof reader.result === "string" ? reader.result : null);
+            setDraftSaved(false);
+          };
           reader.readAsDataURL(file);
         }} />
 
@@ -1404,7 +1519,7 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
             <label className="block text-sm font-semibold text-gray-900 mb-1">Title</label>
             <input
               value={title}
-              onChange={e => setTitle(e.target.value)}
+              onChange={e => { setTitle(e.target.value); setDraftSaved(false); }}
               placeholder="Article Title"
               maxLength={150}
               className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-700 placeholder-gray-400"
@@ -1415,7 +1530,7 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
             <label className="block text-sm font-semibold text-gray-900 mb-1">Article</label>
             <textarea
               value={body}
-              onChange={e => setBody(e.target.value)}
+              onChange={e => { setBody(e.target.value); setDraftSaved(false); }}
               placeholder="Write you article here"
               maxLength={100000}
               rows={7}
@@ -1426,8 +1541,9 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
         </div>
       </div>
 
+      {error && <p className="px-4 text-sm text-red-500 mb-2">{error}</p>}
       <div className="px-4 pb-10 pt-2">
-        <PrimaryButton label="Publish" onClick={() => onPublish({ title, body, category: "My Story", image: coverImage ?? "" }, article?.id)} disabled={!filled} />
+        <PrimaryButton label={saving ? "Saving..." : "Publish"} onClick={publishArticle} disabled={!filled || saving} />
       </div>
 
       {/* Delete modal */}
@@ -1436,9 +1552,10 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
           <div className="bg-white rounded-t-3xl w-full px-6 py-8">
             <h3 className="font-bold text-xl text-gray-900 text-center mb-2">Delete Article</h3>
             <p className="text-gray-500 text-sm text-center mb-6">Are you sure you want to delete this article?</p>
+            {error && <p className="text-sm text-red-500 text-center mb-4">{error}</p>}
             <div className="flex gap-3">
               <OutlineButton label="Cancel" onClick={() => setShowDelete(false)} />
-              <PrimaryButton label="Delete" onClick={() => { setShowDelete(false); onBack(); }} />
+              <PrimaryButton label={saving ? "Deleting..." : "Delete"} onClick={deleteArticle} disabled={saving} />
             </div>
           </div>
         </div>
@@ -1504,8 +1621,24 @@ function AppContent() {
   const [deletingArticle, setDeletingArticle] = useState<{ article: Article; isDraft: boolean } | null>(null);
   const [accountDraft, setAccountDraft] = useState<AccountDraft>({ username: "", email: "", password: "", confirm: "" });
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" });
-  const { userArticles, publishedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading, account } = useVeriPress();
+  const [actionError, setActionError] = useState("");
+  const { userArticles, publishedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading, loadError, signupNeedsConfirmation, account } = useVeriPress();
   const selfHandle = profile.username ? `@${profile.username}` : "";
+  function handleLogout(): Promise<void> {
+    return logout().then(() => {
+      setActionError("");
+      replace("auth-options");
+    }).catch((error: unknown) => {
+      console.error("Unable to sign out.", error);
+      setActionError(error instanceof Error ? error.message : "Unable to sign out. Try again.");
+    });
+  }
+  function handleToggleFollowing(handle: string) {
+    void toggleFollowing(handle).then(() => setActionError("")).catch((error: unknown) => {
+      console.error("Unable to update following status.", error);
+      setActionError(error instanceof Error ? error.message : "Unable to update following status. Try again.");
+    });
+  }
 
   // Once loading finishes, redirect based on session state
   const hasRedirectedRef = useRef(false);
@@ -1526,6 +1659,17 @@ function AppContent() {
         <div className="flex flex-col items-center gap-4">
           <img src={LOGO_SRC} alt="VeriPress" width={64} height={64} className="object-contain" />
           <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#1B2B6B", borderTopColor: "transparent" }} />
+        </div>
+      </div>
+    );
+  }
+  if (loadError) {
+    return (
+      <div className="flex h-full min-h-[100dvh] items-center justify-center bg-gray-100 p-6">
+        <div className="max-w-sm rounded-2xl bg-white p-6 text-center shadow">
+          <h1 className="mb-2 text-lg font-bold text-gray-900">Unable to load VeriPress</h1>
+          <p className="mb-5 text-sm text-gray-600">{loadError}</p>
+          <PrimaryButton label="Try again" onClick={() => window.location.reload()} />
         </div>
       </div>
     );
@@ -1606,7 +1750,7 @@ function AppContent() {
     if (source) {
       const handle = source.ownerUsername
         ? `@${source.ownerUsername}`
-        : `@${source.author.toLowerCase().replaceAll(" ", "_")}`;
+        : `@${source.author.toLowerCase().replace(/ /g, "_")}`;
       setProfilePerson({
         name: source.author,
         handle,
@@ -1637,19 +1781,21 @@ function AppContent() {
       case "create-account":
         return <CreateAccountScreen draft={accountDraft} onDraftChange={setAccountDraft} onBack={() => { setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goBack(); }} onContinue={async account => { const result = await createAccount(account); if (result === "created") goTo("complete-profile"); return result; }} />;
       case "complete-profile":
-        return <CompleteProfileScreen draft={profileDraft} onDraftChange={setProfileDraft} onBack={goBack} onContinue={async nextProfile => { await completeProfile(nextProfile); setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); goTo("discover-people"); return true; }} />;
+        return <CompleteProfileScreen draft={profileDraft} onDraftChange={setProfileDraft} onBack={goBack} onContinue={async nextProfile => { await completeProfile(nextProfile); setAccountDraft({ username: "", email: "", password: "", confirm: "" }); setProfileDraft({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" }); if (signupNeedsConfirmation) replace("signup-success"); else goTo("discover-people"); return true; }} />;
+      case "signup-success":
+        return <SignupConfirmationScreen email={account?.email ?? ""} onBackToSignIn={() => replace("auth-options")} />;
       case "discover-people":
-        return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={toggleFollowing} onViewProfile={person => openPublicProfile(person.handle)} />;
+        return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={handleToggleFollowing} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "home":
-        return <HomeScreen onNavigate={replace} onArticle={openArticle} onAuthor={openPublicProfile} userArticles={userArticles} />;
+        return <HomeScreen onNavigate={replace} onArticle={openArticle} onAuthor={openPublicProfile} userArticles={userArticles} publishedArticles={publishedArticles} />;
       case "discover":
         return <DiscoverScreen onNavigate={replace} onOpenList={goTo} onArticle={openArticle} onAuthor={openPublicProfile} publishedArticles={publishedArticles} registeredWriters={registeredWriters} />;
       case "popular-articles":
-        return <DiscoverListScreen kind="popular" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} />;
+        return <DiscoverListScreen kind="popular" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} publishedArticles={publishedArticles} />;
       case "top-writers":
-        return <DiscoverListScreen kind="writers" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} />;
+        return <DiscoverListScreen kind="writers" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} publishedArticles={publishedArticles} />;
       case "new-articles":
-        return <DiscoverListScreen kind="new" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} />;
+        return <DiscoverListScreen kind="new" onBack={goBack} onArticle={openArticle} onAuthor={openPublicProfile} publishedArticles={publishedArticles} />;
       case "following-list":
         return <ConnectionsScreen type="following" onBack={goBack} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} followerHandles={followerHandles} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "followers-list":
@@ -1659,20 +1805,20 @@ function AppContent() {
       case "my-articles":
         return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); replace("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); replace("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} />;
       case "profile":
-        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={() => { logout(); replace("auth-options"); }} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
+        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={handleLogout} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
       case "edit-profile":
         return <EditProfileScreen profile={profile} account={account} onBack={goBack} onSave={completeProfile} />;
       case "create-article":
-        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); replace("my-articles"); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={(article, id) => { publishArticle(article, id); setEditingArticle(null); replace("my-articles"); }} />;
+        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); replace("my-articles"); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={async (article, id) => { await publishArticle(article, id); setEditingArticle(null); replace("my-articles"); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); replace("my-articles"); }} />;
       case "article-detail":
         {
           const article = [...publishedArticles, ...ARTICLES].find(item => item.id === articleId) ?? ARTICLES[1];
-          const authorHandle = article.ownerUsername ? `@${article.ownerUsername}` : `@${article.author.toLowerCase().replaceAll(" ", "_")}`;
+          const authorHandle = article.ownerUsername ? `@${article.ownerUsername}` : `@${article.author.toLowerCase().replace(/ /g, "_")}`;
           const isSelfArticle = article.ownerUsername ? article.ownerUsername.toLowerCase() === profile.username.toLowerCase() : article.author.toLowerCase() === profile.name.toLowerCase() || authorHandle === selfHandle.toLowerCase();
-          return <ArticleDetailScreen articleId={articleId} articles={[...publishedArticles, ...ARTICLES]} onBack={goBack} following={Boolean(following[authorHandle.toLowerCase()])} isSelf={isSelfArticle} onToggleFollowing={() => toggleFollowing(authorHandle)} />;
+          return <ArticleDetailScreen articleId={articleId} articles={[...publishedArticles, ...ARTICLES]} onBack={goBack} following={Boolean(following[authorHandle.toLowerCase()])} isSelf={isSelfArticle} onToggleFollowing={() => handleToggleFollowing(authorHandle)} />;
         }
       case "public-profile":
-        return profilePerson ? <PublicProfileScreen person={profilePerson} articles={[...publishedArticles, ...ARTICLES].filter(article => article.ownerUsername?.toLowerCase() === profilePerson.handle.slice(1).toLowerCase() || (!article.ownerUsername && article.author === profilePerson.name))} followingPeople={peopleForHandles(Object.keys(followingByUser[profilePerson.handle.slice(1).toLowerCase()] ?? {}))} followerPeople={peopleForHandles(followersByUser[profilePerson.handle.slice(1).toLowerCase()] ?? [])} onBack={goBack} onArticle={openArticle} following={Boolean(following[profilePerson.handle.toLowerCase()])} followers={followers[profilePerson.handle.toLowerCase()] ?? 0} followingCount={followingCounts[profilePerson.handle.slice(1).toLowerCase()] ?? 0} isSelf={profilePerson.handle.toLowerCase() === selfHandle.toLowerCase()} onToggleFollowing={() => toggleFollowing(profilePerson.handle)} /> : null;
+        return profilePerson ? <PublicProfileScreen person={profilePerson} articles={publishedArticles.filter(article => article.ownerUsername?.toLowerCase() === profilePerson.handle.slice(1).toLowerCase() || (!article.ownerUsername && article.author === profilePerson.name))} followingPeople={peopleForHandles(Object.keys(followingByUser[profilePerson.handle.slice(1).toLowerCase()] ?? {}))} followerPeople={peopleForHandles(followersByUser[profilePerson.handle.slice(1).toLowerCase()] ?? [])} onBack={goBack} onArticle={openArticle} following={Boolean(following[profilePerson.handle.toLowerCase()])} followers={followers[profilePerson.handle.toLowerCase()] ?? 0} followingCount={followingCounts[profilePerson.handle.slice(1).toLowerCase()] ?? 0} isSelf={profilePerson.handle.toLowerCase() === selfHandle.toLowerCase()} onToggleFollowing={() => handleToggleFollowing(profilePerson.handle)} /> : null;
       default:
         return <SplashScreen onNext={() => goTo("onboarding")} />;
     }
@@ -1689,12 +1835,18 @@ function AppContent() {
         }}
       >
         {renderScreen()}
+        {actionError && (
+          <div role="alert" className="absolute inset-x-3 top-10 z-40 flex items-start justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 shadow">
+            <span>{actionError}</span>
+            <button type="button" onClick={() => setActionError("")} aria-label="Dismiss error">×</button>
+          </div>
+        )}
         {deletingArticle && (
           <DeleteArticleModal
             article={deletingArticle.article}
             isDraft={deletingArticle.isDraft}
             onCancel={() => setDeletingArticle(null)}
-            onConfirm={() => { (deletingArticle.isDraft ? deleteDraft : deletePublished)(deletingArticle.article.id); setDeletingArticle(null); }}
+            onConfirm={async () => { await (deletingArticle.isDraft ? deleteDraft : deletePublished)(deletingArticle.article.id); setDeletingArticle(null); }}
           />
         )}
       </div>
