@@ -23,15 +23,20 @@ can claim an existing account. They can sign in after confirming their email.
 New signups and all subsequent sign-ins use Supabase Auth. Passwords are never
 read from or written to the VeriPress `accounts` table.
 
-## Article archiving migration
+## Article archiving and personal data tools
 
-Before deploying article archiving, run
+Before deploying, run
 [`20261110010000_article_archiving.sql`](./migrations/20261110010000_article_archiving.sql)
-in the Supabase project's SQL Editor **after** applying the Auth migration
-above. It adds the `articles.archived` flag; existing articles default to
-published (`false`). It also restricts archived article reads to their linked
-owner and grants public reads only to published articles. VeriPress filters
-archived articles from public feeds and counts while retaining them in the
-owner's profile for restore or permanent deletion. The migration replaces
-existing `articles` row-level security policies with these access rules, so
-review the migration first if your project has custom article policies.
+in the Supabase SQL Editor **after** applying the Auth migration above. It adds
+the `articles.archived` flag; existing articles default to published (`false`).
+It also restricts archived article reads to their linked owner and grants
+public reads only to published articles. The migration replaces existing
+`articles` row-level security policies, so review it first if your project has
+custom article policies.
+
+Signed-in users can manage their own drafts, published articles, and archived
+articles from **My Articles**. The **Backup & Reports** page exports a JSON
+backup of the user's own profile, articles, drafts, archived articles, and
+following list; restore validates the username and merges records without
+deleting existing data. The report opens the browser's print dialog, where the
+user can select **Save as PDF**.

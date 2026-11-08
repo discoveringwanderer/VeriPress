@@ -5,14 +5,14 @@ import type {
   Account,
   FollowersMap,
   FollowingMap,
-  PersonalBackup,
   RegisteredUser,
   StoredArticle,
+  VeriPressBackup,
   UserProfile,
 } from "../api/veriPressApi";
 
 // ── re-export types so existing imports keep working ─────────────────────────
-export type { Account, FollowersMap, FollowingMap, RegisteredUser, StoredArticle, UserProfile };
+export type { Account, FollowersMap, FollowingMap, RegisteredUser, StoredArticle, UserProfile, VeriPressBackup };
 
 function formatContentTime(prefix: string) {
   return `${prefix} at ${new Intl.DateTimeFormat(undefined, {
@@ -35,6 +35,7 @@ type VeriPressContextValue = {
   // data
   userArticles: StoredArticle[];
   publishedArticles: StoredArticle[];
+  archivedArticles: StoredArticle[];
   drafts: StoredArticle[];
   following: FollowingMap;
   followingCounts: Record<string, number>;
@@ -67,8 +68,10 @@ type VeriPressContextValue = {
   ) => Promise<void>;
   deleteDraft: (id: string) => Promise<void>;
   deletePublished: (id: string) => Promise<void>;
-  setArticleArchived: (id: string, archived: boolean) => Promise<void>;
-  restorePersonalBackup: (backup: PersonalBackup) => Promise<void>;
+  archiveArticle: (id: string) => Promise<void>;
+  restoreArticle: (id: string) => Promise<void>;
+  createBackup: () => Promise<VeriPressBackup>;
+  restoreBackup: (backup: VeriPressBackup) => Promise<void>;
   toggleFollowing: (handle: string) => Promise<void>;
   logout: () => Promise<void>;
   createAccount: (
@@ -83,6 +86,7 @@ const VeriPressContext = createContext<VeriPressContextValue | null>(null);
 
 export function VeriPressProvider({ children }: { children: React.ReactNode }) {
   const [publishedArticles, setPublishedArticles] = useState<StoredArticle[]>([]);
+  const [archivedArticles, setArchivedArticles] = useState<StoredArticle[]>([]);
   const [drafts, setDrafts] = useState<StoredArticle[]>([]);
   const [profile, setProfile] = useState<UserProfile>(BLANK_PROFILE);
   const [account, setAccount] = useState<Account | null>(null);
@@ -99,8 +103,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     async function init() {
       setLoading(true);
       try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
         const [allArticles, allRegistered, allFollowingByUser, allFollowers] = await Promise.all([
           api.getUserArticles(),
           api.getRegisteredUsers(),
@@ -112,6 +114,8 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
         setFollowingByUser(allFollowingByUser);
         setFollowers(allFollowers);
 
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
         if (session?.user) {
           const email = session.user.email;
           if (!email) throw new Error("The signed-in account does not have an email address.");
@@ -124,7 +128,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
           }
           if (acc.authUserId !== session.user.id) {
             await api.saveAccount({ ...acc, authUserId: session.user.id });
-            setPublishedArticles(await api.getUserArticles());
           }
           const savedProfile = await api.getProfileForUser(acc.username);
           const restoredProfile = savedProfile ?? { ...BLANK_PROFILE, username: acc.username };
@@ -132,10 +135,12 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
             api.getFollowingForUser(acc.username),
             api.getDrafts(acc.username),
           ]);
+          const userArchivedArticles = await api.getArchivedArticles(acc.username);
           setAccount({ ...acc, authUserId: session.user.id });
           setProfile(restoredProfile);
           setFollowing(userFollowing);
           setDrafts(userDrafts);
+          setArchivedArticles(userArchivedArticles);
         }
       } finally {
         setLoading(false);
@@ -155,7 +160,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       ? item.ownerUsername.toLowerCase() === profile.username.toLowerCase()
       : item.author === author
   );
-  const publicArticles = publishedArticles.filter((item) => !item.archived);
 
   // Build allFollowing with every registered user seeded
   const allFollowing: Record<string, FollowingMap> = {};
@@ -204,6 +208,9 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     setFollowingByUser(allFollowingByUser);
     setFollowers(allFollowers);
     if (activeFollowing) setFollowing(activeFollowing);
+    if (profile.username) {
+      setArchivedArticles(await api.getArchivedArticles(profile.username));
+    }
   }, [profile.username]);
 
   useEffect(() => {
@@ -478,46 +485,47 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
   const deletePublished = useCallback(async (id: string): Promise<void> => {
     await api.deleteArticle(id);
     setPublishedArticles((current) => current.filter((a) => a.id !== id));
+    setArchivedArticles((current) => current.filter((a) => a.id !== id));
   }, []);
 
-  const setArticleArchived = useCallback(async (id: string, archived: boolean): Promise<void> => {
-    const article = userArticles.find((item) => item.id === id);
-    if (!article || article.ownerUsername?.toLowerCase() !== profile.username.toLowerCase()) {
-      throw new Error("You can only archive or restore your own articles.");
-    }
-    const updatedArticle = { ...article, ownerUsername: profile.username, archived };
-    await api.saveArticle(updatedArticle);
-    setPublishedArticles((current) => current.map((item) => item.id === id ? updatedArticle : item));
-  }, [userArticles, profile.username]);
+  const archiveArticle = useCallback(async (id: string): Promise<void> => {
+    if (!profile.username) throw new Error("Sign in to archive your articles.");
+    await api.setArticleArchived(id, profile.username, true);
+    const article = publishedArticles.find((item) => item.id === id);
+    if (!article) return;
+    const archived = { ...article, archived: true };
+    setPublishedArticles((current) => current.filter((item) => item.id !== id));
+    setArchivedArticles((current) => [archived, ...current.filter((item) => item.id !== id)]);
+  }, [profile.username, publishedArticles]);
 
-  const restorePersonalBackup = useCallback(async (backup: PersonalBackup): Promise<void> => {
-    if (!profile.username || backup.username.toLowerCase() !== profile.username.toLowerCase() ||
-      backup.profile.username.toLowerCase() !== profile.username.toLowerCase()) {
-      throw new Error("This backup belongs to a different VeriPress account.");
-    }
+  const restoreArticle = useCallback(async (id: string): Promise<void> => {
+    if (!profile.username) throw new Error("Sign in to restore your articles.");
+    await api.setArticleArchived(id, profile.username, false);
+    const article = archivedArticles.find((item) => item.id === id);
+    if (!article) return;
+    const restored = { ...article, archived: false };
+    setArchivedArticles((current) => current.filter((item) => item.id !== id));
+    setPublishedArticles((current) => [restored, ...current.filter((item) => item.id !== id)]);
+  }, [profile.username, archivedArticles]);
 
-    const restoredProfile = { ...backup.profile, username: profile.username };
-    await api.mergeBackupArticles(profile.username, backup.articles, "articles");
-    await api.mergeBackupArticles(profile.username, backup.drafts, "drafts");
-    await api.saveProfileForUser(profile.username, restoredProfile);
+  const createBackup = useCallback(async (): Promise<VeriPressBackup> => {
+    if (!profile.username) throw new Error("Sign in to create a backup.");
+    return api.createUserBackup(profile.username);
+  }, [profile.username]);
 
-    const registeredUsernames = new Set(registeredUsers.map((user) => user.username.toLowerCase()));
-    for (const username of backup.following) {
-      const normalizedUsername = username.replace(/^@/, "").trim();
-      if (normalizedUsername &&
-        normalizedUsername.toLowerCase() !== profile.username.toLowerCase() &&
-        registeredUsernames.has(normalizedUsername.toLowerCase())) {
-        await api.followUser(profile.username, normalizedUsername);
-      }
-    }
-
-    setProfile(restoredProfile);
-    const [restoredDrafts] = await Promise.all([
+  const restoreBackup = useCallback(async (backup: VeriPressBackup): Promise<void> => {
+    if (!profile.username) throw new Error("Sign in to restore a backup.");
+    await api.restoreUserBackup(profile.username, backup);
+    const [savedProfile, userDrafts, userArchivedArticles] = await Promise.all([
+      api.getProfileForUser(profile.username),
       api.getDrafts(profile.username),
-      refreshGlobal(),
+      api.getArchivedArticles(profile.username),
     ]);
-    setDrafts(restoredDrafts);
-  }, [profile.username, registeredUsers, refreshGlobal]);
+    await refreshGlobal();
+    if (savedProfile) setProfile(savedProfile);
+    setDrafts(userDrafts);
+    setArchivedArticles(userArchivedArticles);
+  }, [profile.username, refreshGlobal]);
 
   const toggleFollowing = useCallback(async (handle: string): Promise<void> => {
     if (!profile.username) return;
@@ -552,6 +560,7 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     setSignupNeedsConfirmation(false);
     setFollowing({});
     setDrafts([]);
+    setArchivedArticles([]);
   }, []);
 
   const validateCredentials = useCallback(async (
@@ -570,7 +579,8 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     <VeriPressContext.Provider
       value={{
         userArticles,
-        publishedArticles: publicArticles,
+        publishedArticles,
+        archivedArticles,
         drafts,
         following,
         followingCounts,
@@ -590,8 +600,10 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
         updatePublished,
         deleteDraft: deleteDraftFn,
         deletePublished,
-        setArticleArchived,
-        restorePersonalBackup,
+        archiveArticle,
+        restoreArticle,
+        createBackup,
+        restoreBackup,
         toggleFollowing,
         logout,
         createAccount,

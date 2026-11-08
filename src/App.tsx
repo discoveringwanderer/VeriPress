@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import type { PersonalBackup, RegisteredUser, StoredArticle, UserProfile } from "./api/veriPressApi";
+import type { RegisteredUser, UserProfile, VeriPressBackup } from "./api/veriPressApi";
 import { veriPressApi } from "./api/veriPressApi";
 import { VeriPressProvider } from "./context/VeriPressContext";
 import { useAppRouter } from "./hooks/useAppRouter";
@@ -27,7 +27,7 @@ type Screen =
   | "home" | "discover" | "create-article" | "my-articles" | "profile"
   | "edit-profile" | "article-detail" | "public-profile"
   | "popular-articles" | "top-writers" | "new-articles"
-  | "following-list" | "followers-list" | "profile-articles";
+  | "following-list" | "followers-list" | "profile-articles" | "data-tools";
 
 type Article = {
   id: string;
@@ -41,43 +41,6 @@ type Article = {
   ownerUsername?: string;
   archived?: boolean;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isBackupArticle(value: unknown): value is StoredArticle {
-  return isRecord(value) &&
-    typeof value.id === "string" && value.id.length > 0 &&
-    typeof value.title === "string" &&
-    typeof value.author === "string" &&
-    typeof value.avatar === "string" &&
-    typeof value.time === "string" &&
-    typeof value.image === "string" &&
-    typeof value.body === "string" &&
-    typeof value.category === "string" &&
-    (value.ownerUsername === undefined || typeof value.ownerUsername === "string") &&
-    (value.archived === undefined || typeof value.archived === "boolean");
-}
-
-function isPersonalBackup(value: unknown): value is PersonalBackup {
-  if (!isRecord(value) || !isRecord(value.profile)) return false;
-  const profile = value.profile;
-  return value.format === "veripress-backup" &&
-    value.version === 1 &&
-    typeof value.exportedAt === "string" &&
-    typeof value.username === "string" &&
-    typeof profile.username === "string" &&
-    typeof profile.name === "string" &&
-    (typeof profile.avatar === "string" || profile.avatar === null) &&
-    typeof profile.description === "string" &&
-    typeof profile.phone === "string" &&
-    typeof profile.gender === "string" &&
-    typeof profile.dob === "string" &&
-    Array.isArray(value.articles) && value.articles.every(isBackupArticle) &&
-    Array.isArray(value.drafts) && value.drafts.every(isBackupArticle) &&
-    Array.isArray(value.following) && value.following.every((username) => typeof username === "string");
-}
 
 type AccountDraft = { username: string; email: string; password: string; confirm: string };
 type ProfileDraft = Pick<UserProfile, "name" | "phone" | "gender" | "dob" | "avatar" | "description">;
@@ -206,10 +169,11 @@ function ArticleCard({
 }
 
 function ArticleListItem({
-  image, title, author, avatar, time, showEdit = false, onPress, onEdit, onDelete
+  image, title, author, avatar, time, showEdit = false, onPress, onEdit, onDelete, actionLabel, onAction
 }: {
   image: string; title: string; author: string; avatar: string;
   time: string; showEdit?: boolean; onPress?: () => void; onEdit?: () => void; onDelete?: () => void;
+  actionLabel?: string; onAction?: () => void;
 }) {
   return (
     <div className="flex gap-3 w-full text-left py-3 border-b border-gray-100">
@@ -227,6 +191,14 @@ function ArticleListItem({
         </div>
       </div>
       </button>
+      {actionLabel && (
+        <button type="button" onClick={event => { event.stopPropagation(); onAction?.(); }} className="rounded-full border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700">
+          {actionLabel}
+        </button>
+      )}
+      {onDelete && !showEdit && (
+        <button onClick={event => { event.stopPropagation(); onDelete(); }} className="p-1 text-xs text-red-500" aria-label={`Delete ${title}`}>Delete</button>
+      )}
       {showEdit && (
         <div className="flex items-center gap-2 flex-shrink-0">
           <button onClick={event => { event.stopPropagation(); onEdit?.(); }} className="p-1" aria-label={`Edit ${title}`}>
@@ -671,6 +643,163 @@ function SignupConfirmationScreen({ email, onBackToSignIn }: { email: string; on
   );
 }
 
+function isBackupArticle(value: unknown): value is Article {
+  if (!value || typeof value !== "object") return false;
+  const article = value as Record<string, unknown>;
+  return ["id", "title", "author", "avatar", "time", "image", "body", "category"]
+    .every((field) => typeof article[field] === "string") &&
+    (article.ownerUsername === undefined || typeof article.ownerUsername === "string") &&
+    (article.archived === undefined || typeof article.archived === "boolean");
+}
+
+function isVeriPressBackup(value: unknown): value is VeriPressBackup {
+  if (!value || typeof value !== "object") return false;
+  const backup = value as Record<string, unknown>;
+  if (
+    backup.format !== "veripress-backup" ||
+    backup.version !== 1 ||
+    typeof backup.username !== "string" ||
+    typeof backup.exportedAt !== "string" ||
+    !Array.isArray(backup.following) ||
+    !backup.following.every((handle) => typeof handle === "string") ||
+    !Array.isArray(backup.publishedArticles) ||
+    !backup.publishedArticles.every(isBackupArticle) ||
+    !Array.isArray(backup.archivedArticles) ||
+    !backup.archivedArticles.every(isBackupArticle) ||
+    !Array.isArray(backup.drafts) ||
+    !backup.drafts.every(isBackupArticle) ||
+    !backup.profile ||
+    typeof backup.profile !== "object"
+  ) return false;
+  const profile = backup.profile as Record<string, unknown>;
+  return ["username", "name", "description", "phone", "gender", "dob"]
+    .every((field) => typeof profile[field] === "string") &&
+    (typeof profile.avatar === "string" || profile.avatar === null);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
+function DataToolsScreen({ profile, publishedArticles, archivedArticles, drafts, followingCount, followerCount, onBack, onCreateBackup, onRestoreBackup }: {
+  profile: UserProfile;
+  publishedArticles: Article[];
+  archivedArticles: Article[];
+  drafts: Article[];
+  followingCount: number;
+  followerCount: number;
+  onBack: () => void;
+  onCreateBackup: () => Promise<VeriPressBackup>;
+  onRestoreBackup: (backup: VeriPressBackup) => Promise<void>;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function downloadBackup() {
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      const backup = await onCreateBackup();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      if (blob.size > 50 * 1024 * 1024) throw new Error("This backup is larger than 50 MB. Remove large cover images and try again.");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `veripress-backup-${profile.username}-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMessage("Your personal backup has been downloaded.");
+    } catch (backupError) {
+      setError(backupError instanceof Error ? backupError.message : "Unable to create your backup.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreBackup(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      if (file.size > 50 * 1024 * 1024) throw new Error("Backup files must be smaller than 50 MB.");
+      const parsed: unknown = JSON.parse(await file.text());
+      if (!isVeriPressBackup(parsed)) throw new Error("This file is not a valid VeriPress backup.");
+      if (parsed.username.toLowerCase() !== profile.username.toLowerCase()) {
+        throw new Error("This backup belongs to a different username.");
+      }
+      if (!window.confirm("Restore this backup? It will merge its profile, articles, drafts, and follows with your current data.")) return;
+      await onRestoreBackup(parsed);
+      setMessage("Backup restored. Your existing data was kept and backup data was merged.");
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore this backup.");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function generatePdfReport() {
+    const reportWindow = window.open("", "_blank");
+    if (!reportWindow) {
+      setError("Allow pop-ups for VeriPress to generate your PDF report.");
+      return;
+    }
+    reportWindow.opener = null;
+    const articles = [
+      ...publishedArticles.map((article) => ({ article, status: "Published" })),
+      ...archivedArticles.map((article) => ({ article, status: "Archived" })),
+      ...drafts.map((article) => ({ article, status: "Draft" })),
+    ];
+    const rows = articles.map(({ article, status }) =>
+      `<tr><td>${escapeHtml(article.title)}</td><td>${escapeHtml(status)}</td><td>${escapeHtml(article.category)}</td></tr>`
+    ).join("");
+    reportWindow.document.open();
+    reportWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>VeriPress report - ${escapeHtml(profile.username)}</title><style>body{font:14px Arial,sans-serif;color:#1f2937;max-width:900px;margin:40px auto;padding:0 24px}h1{color:#1b2b6b}p{color:#4b5563}.stats{display:flex;gap:12px;margin:24px 0}.stats div{border:1px solid #d1d5db;border-radius:8px;padding:12px;flex:1}.stats strong{display:block;font-size:22px}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb}th{background:#f3f4f6}@media print{body{margin:0 auto}}</style></head><body><h1>VeriPress activity report</h1><p>Account: <strong>${escapeHtml(profile.name || profile.username)}</strong> (@${escapeHtml(profile.username)})</p><p>Generated: ${escapeHtml(new Date().toLocaleString())}</p><div class="stats"><div><strong>${publishedArticles.length}</strong>Published articles</div><div><strong>${archivedArticles.length}</strong>Archived articles</div><div><strong>${drafts.length}</strong>Drafts</div><div><strong>${followerCount}</strong>Followers</div><div><strong>${followingCount}</strong>Following</div></div><h2>Articles</h2><table><thead><tr><th>Title</th><th>Status</th><th>Category</th></tr></thead><tbody>${rows || "<tr><td colspan='3'>No articles or drafts</td></tr>"}</tbody></table><script>window.onload=()=>window.print()</script></body></html>`);
+    reportWindow.document.close();
+    setError("");
+  }
+
+  return (
+    <div className="flex h-full flex-col bg-white">
+      <StatusBar />
+      <div className="flex items-center gap-3 border-b border-gray-100 px-4 py-3">
+        <BackArrow onPress={onBack} />
+        <h2 className="font-bold text-base text-gray-900">Backup & Reports</h2>
+      </div>
+      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
+        <section className="rounded-2xl border border-gray-200 p-4">
+          <h3 className="mb-1 font-semibold text-gray-900">Personal backup</h3>
+          <p className="mb-4 text-xs leading-relaxed text-gray-500">Export your profile, articles, drafts, archived articles, and following list as a private JSON file.</p>
+          <PrimaryButton label={busy ? "Working..." : "Download backup"} onClick={downloadBackup} disabled={busy} />
+        </section>
+        <section className="rounded-2xl border border-gray-200 p-4">
+          <h3 className="mb-1 font-semibold text-gray-900">Restore backup</h3>
+          <p className="mb-4 text-xs leading-relaxed text-gray-500">Restore a VeriPress JSON backup for @{profile.username}. Data is merged; existing records are not deleted.</p>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => void restoreBackup(event.target.files?.[0])} />
+          <OutlineButton label={busy ? "Working..." : "Choose backup file"} onClick={() => fileRef.current?.click()} />
+        </section>
+        <section className="rounded-2xl border border-gray-200 p-4">
+          <h3 className="mb-1 font-semibold text-gray-900">Activity report</h3>
+          <p className="mb-4 text-xs leading-relaxed text-gray-500">Generate a printable account summary. In the print dialog, choose “Save as PDF”.</p>
+          <PrimaryButton label="Generate PDF report" onClick={generatePdfReport} />
+        </section>
+        {message && <p role="status" className="text-sm text-green-700">{message}</p>}
+        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
 type Person = { name: string; handle: string; avatar: string | null; following: boolean };
 
 function PersonAvatar({ src, name, className }: { src: string | null; name: string; className: string }) {
@@ -999,8 +1128,16 @@ function DiscoverListScreen({ kind, onBack, onArticle, onAuthor, publishedArticl
   );
 }
 
-function MyArticlesScreen({ onNavigate, onArticle, userArticles, drafts, onCreate, onEdit, onDelete }: { onNavigate: (s: Screen) => void; onArticle: (id: string) => void; userArticles: Article[]; drafts: Article[]; onCreate: () => void; onEdit: (article: Article, isDraft: boolean) => void; onDelete: (article: Article, isDraft: boolean) => void }) {
-  const [tab, setTab] = useState<"draft" | "published">("draft");
+function MyArticlesScreen({ onNavigate, onArticle, userArticles, archivedArticles, drafts, onCreate, onEdit, onDelete, onArchive, onRestore }: { onNavigate: (s: Screen) => void; onArticle: (id: string) => void; userArticles: Article[]; archivedArticles: Article[]; drafts: Article[]; onCreate: () => void; onEdit: (article: Article, isDraft: boolean) => void; onDelete: (article: Article, isDraft: boolean) => void; onArchive: (article: Article) => void; onRestore: (id: string) => void }) {
+  const [tab, setTab] = useState<"draft" | "published" | "archived">("draft");
+  const [search, setSearch] = useState("");
+  const term = search.trim().toLowerCase();
+  const filterArticles = (articles: Article[]) => articles.filter((article) =>
+    `${article.title} ${article.author} ${article.category} ${article.body}`.toLowerCase().includes(term)
+  );
+  const visibleDrafts = filterArticles(drafts);
+  const visibleArticles = filterArticles(userArticles);
+  const visibleArchived = filterArticles(archivedArticles);
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -1013,7 +1150,7 @@ function MyArticlesScreen({ onNavigate, onArticle, userArticles, drafts, onCreat
 
         {/* Tabs */}
         <div className="flex gap-1 border-b border-gray-200">
-          {(["draft", "published"] as const).map(t => (
+          {(["draft", "published", "archived"] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -1023,7 +1160,7 @@ function MyArticlesScreen({ onNavigate, onArticle, userArticles, drafts, onCreat
                 : { borderColor: "transparent", color: "#9ca3af" }
               }
             >
-              {t === "draft" ? `Draft (${drafts.length})` : `Published (${userArticles.length})`}
+              {t === "draft" ? `Draft (${drafts.length})` : t === "published" ? `Published (${userArticles.length})` : `Archived (${archivedArticles.length})`}
             </button>
           ))}
         </div>
@@ -1031,23 +1168,28 @@ function MyArticlesScreen({ onNavigate, onArticle, userArticles, drafts, onCreat
 
       <div className="flex-1 overflow-y-auto px-4">
         <div className="flex items-center justify-between mb-3">
-          <p className="text-gray-500 text-xs">{tab === "draft" ? drafts.length : userArticles.length} Articles</p>
-          <button onClick={onCreate} className="text-xs font-semibold" style={{ color: "#1B2B6B" }}>+ New article</button>
+          <p className="text-gray-500 text-xs">{tab === "draft" ? visibleDrafts.length : tab === "published" ? visibleArticles.length : visibleArchived.length} Articles</p>
+          {tab !== "archived" && <button onClick={onCreate} className="text-xs font-semibold" style={{ color: "#1B2B6B" }}>+ New article</button>}
         </div>
-        {tab === "draft" ? (drafts.length === 0 ? (
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${tab}...`} aria-label={`Search ${tab} articles`} className="mb-3 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+        {tab === "draft" ? (visibleDrafts.length === 0 ? (
           <div className="text-center py-12">
-            <p className="font-semibold text-gray-800 text-sm">No drafts yet</p>
-            <p className="text-gray-400 text-xs mt-1">Create something worth reading.</p>
+            <p className="font-semibold text-gray-800 text-sm">{term ? "No matching drafts" : "No drafts yet"}</p>
+            {!term && <p className="text-gray-400 text-xs mt-1">Create something worth reading.</p>}
           </div>
-        ) : drafts.map(a => (
+        ) : visibleDrafts.map(a => (
           <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onEdit={() => onEdit(a, true)} onDelete={() => onDelete(a, true)} />
-        ))) : userArticles.length === 0 ? (
+        ))) : tab === "published" ? visibleArticles.length === 0 ? (
           <div className="text-center py-12">
-            <p className="font-semibold text-gray-800 text-sm">No published articles yet</p>
-            <p className="text-gray-400 text-xs mt-1">Create something worth reading.</p>
+            <p className="font-semibold text-gray-800 text-sm">{term ? "No matching articles" : "No published articles yet"}</p>
+            {!term && <p className="text-gray-400 text-xs mt-1">Create something worth reading.</p>}
           </div>
-        ) : userArticles.map(a => (
-          <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onPress={() => onArticle(a.id)} onEdit={() => onEdit(a, false)} onDelete={() => onDelete(a, false)} />
+        ) : visibleArticles.map(a => (
+          <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit actionLabel="Archive" onAction={() => onArchive(a)} onPress={() => onArticle(a.id)} onEdit={() => onEdit(a, false)} onDelete={() => onDelete(a, false)} />
+        )) : visibleArchived.length === 0 ? (
+          <div className="text-center py-12"><p className="font-semibold text-gray-800 text-sm">{term ? "No matching archived articles" : "No archived articles"}</p></div>
+        ) : visibleArchived.map(a => (
+          <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} actionLabel="Restore" onAction={() => onRestore(a.id)} onDelete={() => onDelete(a, false)} />
         ))}
       </div>
 
@@ -1115,109 +1257,10 @@ function getFollowedPeople(following: Record<string, boolean>, registeredUsers: 
     });
 }
 
-function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, onOpenArticle, onArchive, onRestoreBackup, userArticles, drafts, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; onOpenArticle: (id: string) => void; onArchive: (id: string, archived: boolean) => Promise<void>; onRestoreBackup: (backup: PersonalBackup) => Promise<void>; userArticles: Article[]; drafts: Article[]; onLogout: () => Promise<void>; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void }) {
-  const [backupBusy, setBackupBusy] = useState(false);
-  const [backupMessage, setBackupMessage] = useState("");
-  const [archiveBusyId, setArchiveBusyId] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, userArticles, onLogout, following, followers, profile, registeredUsers, onViewProfile, onViewConnections, onDataTools }: { onNavigate: (s: Screen) => void; onEdit: () => void; onEditArticle: (article: Article) => void; onDeleteArticle: (article: Article) => void; userArticles: Article[]; onLogout: () => Promise<void>; following: Record<string, boolean>; followers: Record<string, number>; profile: UserProfile; registeredUsers: RegisteredUser[]; onViewProfile: (person: Person) => void; onViewConnections: (type: "articles" | "following" | "followers") => void; onDataTools: () => void }) {
   const followedPeople = getFollowedPeople(following, registeredUsers);
   const followingCount = Object.values(following).filter(Boolean).length;
-  const publishedCount = userArticles.filter((article) => !article.archived).length;
   const selfHandle = profile.username ? `@${profile.username}` : "";
-
-  function downloadBackup() {
-    const backup: PersonalBackup = {
-      format: "veripress-backup",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      username: profile.username,
-      profile,
-      articles: userArticles.filter((article) =>
-        article.ownerUsername?.toLowerCase() === profile.username.toLowerCase()
-      ),
-      drafts,
-      following: Object.entries(following)
-        .filter(([, isFollowing]) => isFollowing)
-        .map(([handle]) => handle.replace(/^@/, "")),
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `veripress-${profile.username}-backup.json`;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setBackupMessage("Your personal backup has been downloaded.");
-  }
-
-  async function downloadReport() {
-    setBackupBusy(true);
-    setBackupMessage("");
-    try {
-      const { jsPDF } = await import("jspdf");
-      const report = new jsPDF();
-      const generatedAt = new Date().toLocaleString();
-      const lines = [
-        `Account: @${profile.username}`,
-        `Generated: ${generatedAt}`,
-        `Published articles: ${publishedCount}`,
-        `Archived articles: ${userArticles.length - publishedCount}`,
-        `Drafts: ${drafts.length}`,
-        `Following: ${followingCount}`,
-        `Followers: ${followers[selfHandle.toLowerCase()] ?? 0}`,
-        "",
-        "ARTICLE INVENTORY",
-        ...userArticles.map((article, index) =>
-          `${index + 1}. ${article.title} (${article.archived ? "Archived" : "Published"}) - ${article.category}`
-        ),
-        "",
-        "DRAFTS",
-        ...(drafts.length ? drafts.map((draft, index) => `${index + 1}. ${draft.title}`) : ["No drafts"]),
-      ];
-      let y = 18;
-      report.setFontSize(18);
-      report.text("VeriPress Personal Report", 14, y);
-      report.setFontSize(10);
-      for (const line of lines) {
-        const wrappedLines = report.splitTextToSize(line, 180) as string[];
-        for (const wrappedLine of wrappedLines) {
-          y += 6;
-          if (y > 278) {
-            report.addPage();
-            y = 18;
-          }
-          report.text(wrappedLine, 14, y);
-        }
-      }
-      report.save(`veripress-${profile.username}-report.pdf`);
-      setBackupMessage("Your PDF report has been downloaded.");
-    } catch (error) {
-      setBackupMessage(error instanceof Error ? error.message : "Unable to generate your PDF report.");
-    } finally {
-      setBackupBusy(false);
-    }
-  }
-
-  async function restoreBackup(file: File | undefined) {
-    if (!file) return;
-    setBackupBusy(true);
-    setBackupMessage("");
-    try {
-      if (file.size > 10 * 1024 * 1024) throw new Error("Backup files must be 10 MB or smaller.");
-      const data: unknown = JSON.parse(await file.text());
-      if (!isPersonalBackup(data)) throw new Error("This file is not a valid VeriPress backup.");
-      if (data.username.toLowerCase() !== profile.username.toLowerCase()) {
-        throw new Error("This backup belongs to a different VeriPress account.");
-      }
-      await onRestoreBackup(data);
-      setBackupMessage("Backup merged successfully. Existing data was preserved.");
-    } catch (error) {
-      setBackupMessage(error instanceof Error ? error.message : "Unable to restore this backup.");
-    } finally {
-      setBackupBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -1252,7 +1295,7 @@ function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, onO
 
           {/* Stats */}
           <div className="flex gap-4 mb-6">
-            {[{ label: "Articles", value: String(publishedCount), type: "articles" as const }, { label: "Following", value: String(followingCount), type: "following" as const }, { label: "Followers", value: String(followers[selfHandle.toLowerCase()] ?? 0), type: "followers" as const }].map(s => (
+            {[{ label: "Articles", value: String(userArticles.length), type: "articles" as const }, { label: "Following", value: String(followingCount), type: "following" as const }, { label: "Followers", value: String(followers[selfHandle.toLowerCase()] ?? 0), type: "followers" as const }].map(s => (
               <button key={s.label} type="button" onClick={() => onViewConnections(s.type)} className="flex-1 text-center">
                 <p className="font-bold text-gray-900 text-base">{s.value}</p>
                 <p className="text-gray-400 text-xs">{s.label}</p>
@@ -1261,21 +1304,12 @@ function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, onO
           </div>
 
           <div className="flex items-center justify-between mb-4">
-            <p className="text-gray-500 text-xs">{publishedCount} Articles</p>
-            <button onClick={onLogout} className="text-xs font-semibold text-red-500">Log out</button>
-          </div>
-
-          <section className="mb-5 rounded-xl border border-gray-100 bg-gray-50 p-3">
-            <h3 className="font-semibold text-gray-900 text-sm mb-2">Your data</h3>
-            <p className="text-gray-500 text-xs mb-3">Back up or restore your profile, articles, drafts, and following list. Restoring merges data and does not delete existing content.</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={downloadBackup} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-gray-800 border border-gray-200">Download backup</button>
-              <button type="button" disabled={backupBusy} onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-gray-800 border border-gray-200 disabled:opacity-50">{backupBusy ? "Restoring..." : "Restore backup"}</button>
-              <button type="button" disabled={backupBusy} onClick={() => void downloadReport()} className="col-span-2 rounded-lg px-3 py-2 text-xs font-semibold text-white disabled:opacity-50" style={{ background: "#1B2B6B" }}>{backupBusy ? "Preparing..." : "Download PDF report"}</button>
+            <p className="text-gray-500 text-xs">{userArticles.length} Articles</p>
+            <div className="flex items-center gap-4">
+              <button onClick={onDataTools} className="text-xs font-semibold" style={{ color: "#1B2B6B" }}>Backup & Reports</button>
+              <button onClick={onLogout} className="text-xs font-semibold text-red-500">Log out</button>
             </div>
-            <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={event => void restoreBackup(event.target.files?.[0])} />
-            {backupMessage && <p role="status" className="mt-2 text-xs text-gray-600">{backupMessage}</p>}
-          </section>
+          </div>
 
           <div className="mb-5">
             <h3 className="font-semibold text-gray-900 text-sm mb-3">Following</h3>
@@ -1299,32 +1333,7 @@ function ProfileScreen({ onNavigate, onEdit, onEditArticle, onDeleteArticle, onO
               <p className="text-gray-400 text-xs mt-1">Publish your first article to build your profile.</p>
             </div>
           ) : userArticles.map(a => (
-            <div key={a.id}>
-              <ArticleListItem image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit={a.ownerUsername?.toLowerCase() === profile.username.toLowerCase()} onPress={() => onOpenArticle(a.id)} onEdit={() => onEditArticle(a)} onDelete={() => onDeleteArticle(a)} />
-              <div className="flex items-center justify-between pb-2">
-                <span className="text-xs text-gray-400">{a.archived ? "Archived — hidden from public feeds" : "Published"}</span>
-                {a.ownerUsername?.toLowerCase() === profile.username.toLowerCase() && <button
-                  type="button"
-                  disabled={archiveBusyId === a.id}
-                  onClick={async () => {
-                    setArchiveBusyId(a.id);
-                    setBackupMessage("");
-                    try {
-                      await onArchive(a.id, !a.archived);
-                      setBackupMessage(a.archived ? "Article restored to public feeds." : "Article archived and removed from public feeds.");
-                    } catch (error) {
-                      setBackupMessage(error instanceof Error ? error.message : "Unable to update archive status.");
-                    } finally {
-                      setArchiveBusyId("");
-                    }
-                  }}
-                  className="text-xs font-semibold disabled:opacity-50"
-                  style={{ color: "#1B2B6B" }}
-                >
-                  {archiveBusyId === a.id ? "Saving..." : a.archived ? "Unarchive" : "Archive"}
-                </button>}
-              </div>
-            </div>
+            <ArticleListItem key={a.id} image={a.image} title={a.title} author={a.author} avatar={a.avatar} time={a.time} showEdit onPress={() => onNavigate("profile-articles")} onEdit={() => onEditArticle(a)} onDelete={() => onDeleteArticle(a)} />
           ))}
         </div>
       </div>
@@ -1796,7 +1805,7 @@ function AppContent() {
   const [accountDraft, setAccountDraft] = useState<AccountDraft>({ username: "", email: "", password: "", confirm: "" });
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" });
   const [actionError, setActionError] = useState("");
-  const { userArticles, publishedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, setArticleArchived, restorePersonalBackup, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading, loadError, signupNeedsConfirmation, account } = useVeriPress();
+  const { userArticles, publishedArticles, archivedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, archiveArticle, restoreArticle, createBackup, restoreBackup, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading, loadError, signupNeedsConfirmation, account } = useVeriPress();
   const selfHandle = profile.username ? `@${profile.username}` : "";
   function handleLogout(): Promise<void> {
     return logout().then(() => {
@@ -1811,6 +1820,18 @@ function AppContent() {
     void toggleFollowing(handle).then(() => setActionError("")).catch((error: unknown) => {
       console.error("Unable to update following status.", error);
       setActionError(error instanceof Error ? error.message : "Unable to update following status. Try again.");
+    });
+  }
+  function handleArchiveArticle(article: Article) {
+    void archiveArticle(article.id).then(() => setActionError("")).catch((error: unknown) => {
+      console.error("Unable to archive article.", error);
+      setActionError(error instanceof Error ? error.message : "Unable to archive this article.");
+    });
+  }
+  function handleRestoreArticle(id: string) {
+    void restoreArticle(id).then(() => setActionError("")).catch((error: unknown) => {
+      console.error("Unable to restore article.", error);
+      setActionError(error instanceof Error ? error.message : "Unable to restore this article.");
     });
   }
 
@@ -1935,7 +1956,7 @@ function AppContent() {
     }
   }
 
-  const PROTECTED: Screen[] = ["home", "discover", "create-article", "my-articles", "profile", "edit-profile", "article-detail", "public-profile", "popular-articles", "top-writers", "new-articles", "following-list", "followers-list", "profile-articles"];
+  const PROTECTED: Screen[] = ["home", "discover", "create-article", "my-articles", "profile", "edit-profile", "article-detail", "public-profile", "popular-articles", "top-writers", "new-articles", "following-list", "followers-list", "profile-articles", "data-tools"];
 
   const renderScreen = () => {
     // Always bounce unauthenticated users away from protected screens
@@ -1961,7 +1982,7 @@ function AppContent() {
       case "discover-people":
         return <DiscoverPeopleScreen people={discoverPeople} onBack={goBack} onFinish={() => replace("home")} following={following} onToggleFollowing={handleToggleFollowing} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "home":
-        return <HomeScreen onNavigate={replace} onArticle={openArticle} onAuthor={openPublicProfile} userArticles={userArticles.filter(article => !article.archived)} publishedArticles={publishedArticles} />;
+        return <HomeScreen onNavigate={replace} onArticle={openArticle} onAuthor={openPublicProfile} userArticles={userArticles} publishedArticles={publishedArticles} />;
       case "discover":
         return <DiscoverScreen onNavigate={replace} onOpenList={goTo} onArticle={openArticle} onAuthor={openPublicProfile} publishedArticles={publishedArticles} registeredWriters={registeredWriters} />;
       case "popular-articles":
@@ -1975,21 +1996,23 @@ function AppContent() {
       case "followers-list":
         return <ConnectionsScreen type="followers" onBack={goBack} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} followerHandles={followerHandles} onViewProfile={person => openPublicProfile(person.handle)} />;
       case "profile-articles":
-        return <ProfileArticlesScreen articles={userArticles.filter(article => !article.archived)} onBack={goBack} onArticle={openArticle} />;
+        return <ProfileArticlesScreen articles={userArticles} onBack={goBack} onArticle={openArticle} />;
       case "my-articles":
-        return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); replace("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); replace("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} />;
+        return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); replace("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); replace("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} onArchive={handleArchiveArticle} onRestore={handleRestoreArticle} />;
       case "profile":
-        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} onOpenArticle={openArticle} onArchive={setArticleArchived} onRestoreBackup={restorePersonalBackup} userArticles={userArticles} drafts={drafts} onLogout={handleLogout} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} />;
+        return <ProfileScreen onNavigate={replace} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); replace("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={handleLogout} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} onDataTools={() => goTo("data-tools")} />;
       case "edit-profile":
         return <EditProfileScreen profile={profile} account={account} onBack={goBack} onSave={completeProfile} />;
+      case "data-tools":
+        return <DataToolsScreen profile={profile} publishedArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} followingCount={Object.values(following).filter(Boolean).length} followerCount={followers[`@${profile.username}`.toLowerCase()] ?? 0} onBack={goBack} onCreateBackup={createBackup} onRestoreBackup={restoreBackup} />;
       case "create-article":
         return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); replace("my-articles"); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={async (article, id) => { await publishArticle(article, id); setEditingArticle(null); replace("my-articles"); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); replace("my-articles"); }} />;
       case "article-detail":
         {
-          const article = [...userArticles, ...publishedArticles, ...ARTICLES].find(item => item.id === articleId) ?? ARTICLES[1];
+          const article = [...publishedArticles, ...ARTICLES].find(item => item.id === articleId) ?? ARTICLES[1];
           const authorHandle = article.ownerUsername ? `@${article.ownerUsername}` : `@${article.author.toLowerCase().replace(/ /g, "_")}`;
           const isSelfArticle = article.ownerUsername ? article.ownerUsername.toLowerCase() === profile.username.toLowerCase() : article.author.toLowerCase() === profile.name.toLowerCase() || authorHandle === selfHandle.toLowerCase();
-          return <ArticleDetailScreen articleId={articleId} articles={[...userArticles, ...publishedArticles, ...ARTICLES]} onBack={goBack} following={Boolean(following[authorHandle.toLowerCase()])} isSelf={isSelfArticle} onToggleFollowing={() => handleToggleFollowing(authorHandle)} />;
+          return <ArticleDetailScreen articleId={articleId} articles={[...publishedArticles, ...ARTICLES]} onBack={goBack} following={Boolean(following[authorHandle.toLowerCase()])} isSelf={isSelfArticle} onToggleFollowing={() => handleToggleFollowing(authorHandle)} />;
         }
       case "public-profile":
         return profilePerson ? <PublicProfileScreen person={profilePerson} articles={publishedArticles.filter(article => article.ownerUsername?.toLowerCase() === profilePerson.handle.slice(1).toLowerCase() || (!article.ownerUsername && article.author === profilePerson.name))} followingPeople={peopleForHandles(Object.keys(followingByUser[profilePerson.handle.slice(1).toLowerCase()] ?? {}))} followerPeople={peopleForHandles(followersByUser[profilePerson.handle.slice(1).toLowerCase()] ?? [])} onBack={goBack} onArticle={openArticle} following={Boolean(following[profilePerson.handle.toLowerCase()])} followers={followers[profilePerson.handle.toLowerCase()] ?? 0} followingCount={followingCounts[profilePerson.handle.slice(1).toLowerCase()] ?? 0} isSelf={profilePerson.handle.toLowerCase() === selfHandle.toLowerCase()} onToggleFollowing={() => handleToggleFollowing(profilePerson.handle)} /> : null;

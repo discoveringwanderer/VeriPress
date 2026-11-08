@@ -25,17 +25,6 @@ export type StoredArticle = {
   archived?: boolean;
 };
 
-export type PersonalBackup = {
-  format: "veripress-backup";
-  version: 1;
-  exportedAt: string;
-  username: string;
-  profile: UserProfile;
-  articles: StoredArticle[];
-  drafts: StoredArticle[];
-  following: string[];
-};
-
 export type FollowingMap = Record<string, boolean>;
 export type FollowersMap = Record<string, number>;
 export type Account = { username: string; email: string; authUserId?: string | null };
@@ -53,6 +42,17 @@ export type RegisteredUser = {
   name: string;
   avatar: string | null;
   description: string;
+};
+export type VeriPressBackup = {
+  format: "veripress-backup";
+  version: 1;
+  exportedAt: string;
+  username: string;
+  profile: UserProfile;
+  publishedArticles: StoredArticle[];
+  archivedArticles: StoredArticle[];
+  drafts: StoredArticle[];
+  following: string[];
 };
 
 // ── Accounts ────────────────────────────────────────────────────────────────
@@ -216,48 +216,38 @@ export async function getUserArticles(): Promise<StoredArticle[]> {
     .select("*")
     .order("created_at", { ascending: false });
   throwOnSupabaseError(error);
+  return (data ?? []).map(dbToArticle).filter((article) => !article.archived);
+}
+
+export async function getArchivedArticles(username: string): Promise<StoredArticle[]> {
+  if (!username) return [];
+  const { data, error } = await supabase
+    .from("articles")
+    .select("*")
+    .ilike("owner_username", username)
+    .eq("archived", true)
+    .order("created_at", { ascending: false });
+  throwOnSupabaseError(error);
   return (data ?? []).map(dbToArticle);
+}
+
+export async function setArticleArchived(id: string, username: string, archived: boolean): Promise<void> {
+  const { data, error } = await supabase
+    .from("articles")
+    .update({ archived })
+    .eq("id", id)
+    .ilike("owner_username", username)
+    .select("id");
+  if (error && (error.code === "42703" || error.code === "PGRST204" || error.message.includes("archived"))) {
+    throw new Error("Run the article archiving migration in Supabase before archiving articles.");
+  }
+  throwOnSupabaseError(error);
+  if (!data?.length) throw new Error("Article not found or you do not have permission to change it.");
 }
 
 export async function saveArticle(article: StoredArticle): Promise<void> {
   const { error } = await supabase.from("articles").upsert(articleToDb(article), { onConflict: "id" });
   throwOnSupabaseError(error);
-}
-
-export async function mergeBackupArticles(
-  username: string,
-  articles: StoredArticle[],
-  table: "articles" | "drafts"
-): Promise<void> {
-  const backupIds = articles.map((article) => `backup-${username.toLowerCase()}-${article.id}`);
-  const ids = [...articles.map((article) => article.id), ...backupIds];
-  const existingRows = ids.length
-    ? await supabase.from(table).select("id, owner_username").in("id", ids)
-    : { data: [], error: null };
-  throwOnSupabaseError(existingRows.error);
-
-  const existingOwners = new Map(
-    (existingRows.data ?? []).map((row) => [row.id as string, row.owner_username as string])
-  );
-  for (const article of articles) {
-    const backupId = `backup-${username.toLowerCase()}-${article.id}`;
-    const originalOwner = existingOwners.get(article.id);
-    const backupOwner = existingOwners.get(backupId);
-    const isOwnedByCurrentUser = (owner: string | undefined) =>
-      owner?.toLowerCase() === username.toLowerCase();
-    const id = isOwnedByCurrentUser(originalOwner)
-      ? article.id
-      : isOwnedByCurrentUser(backupOwner)
-        ? backupId
-        : existingOwners.has(article.id) || existingOwners.has(backupId)
-          ? `${table === "articles" ? "user" : "draft"}-${crypto.randomUUID()}`
-          : backupId;
-    const restoredArticle = { ...article, id, ownerUsername: username };
-    const { error } = await supabase
-      .from(table)
-      .upsert(articleToDb(restoredArticle, table === "articles"), { onConflict: "id" });
-    throwOnSupabaseError(error);
-  }
 }
 
 export async function deleteArticle(id: string): Promise<void> {
@@ -292,7 +282,7 @@ export async function getDrafts(ownerUsername: string): Promise<StoredArticle[]>
 }
 
 export async function saveDraft(article: StoredArticle): Promise<void> {
-  const { error } = await supabase.from("drafts").upsert(articleToDb(article, false), { onConflict: "id" });
+  const { error } = await supabase.from("drafts").upsert(articleToDb(article), { onConflict: "id" });
   throwOnSupabaseError(error);
 }
 
@@ -315,6 +305,75 @@ export async function getFollowingForUser(username: string): Promise<FollowingMa
     map[`@${row.following_username}`.toLowerCase()] = true;
   });
   return map;
+}
+
+export async function createUserBackup(username: string): Promise<VeriPressBackup> {
+  const [profile, articles, archivedArticles, drafts, following] = await Promise.all([
+    getProfileForUser(username),
+    getUserArticles(),
+    getArchivedArticles(username),
+    getDrafts(username),
+    getFollowingForUser(username),
+  ]);
+  if (!profile) throw new Error("Your profile could not be found, so a backup cannot be created.");
+  return {
+    format: "veripress-backup",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    username,
+    profile,
+    publishedArticles: articles.filter(
+      (article) => article.ownerUsername?.toLowerCase() === username.toLowerCase()
+    ),
+    archivedArticles,
+    drafts,
+    following: Object.keys(following).filter((handle) => following[handle]),
+  };
+}
+
+export async function restoreUserBackup(username: string, backup: VeriPressBackup): Promise<void> {
+  if (backup.format !== "veripress-backup" || backup.version !== 1) {
+    throw new Error("This backup format is not supported.");
+  }
+  if (backup.username.toLowerCase() !== username.toLowerCase()) {
+    throw new Error("This backup belongs to a different username.");
+  }
+  if (backup.profile.username.toLowerCase() !== username.toLowerCase()) {
+    throw new Error("The backup profile does not match the signed-in user.");
+  }
+
+  await saveProfileForUser(username, { ...backup.profile, username });
+
+  async function restoreArticle(article: StoredArticle, archived: boolean, draft: boolean): Promise<void> {
+    if (article.ownerUsername && article.ownerUsername.toLowerCase() !== username.toLowerCase()) {
+      throw new Error("The backup contains an article belonging to another user.");
+    }
+    let id = article.id;
+    const table = draft ? "drafts" : "articles";
+    const { data: existing, error } = await supabase.from(table).select("owner_username").eq("id", id).limit(1);
+    throwOnSupabaseError(error);
+    if (existing?.[0] && existing[0].owner_username?.toLowerCase() !== username.toLowerCase()) {
+      id = `restored-${crypto.randomUUID()}`;
+    }
+    const restoredArticle = {
+      ...article,
+      id,
+      ownerUsername: username,
+      archived: draft ? false : archived,
+    };
+    if (draft) await saveDraft(restoredArticle);
+    else await saveArticle(restoredArticle);
+  }
+
+  for (const article of backup.publishedArticles) await restoreArticle(article, false, false);
+  for (const article of backup.archivedArticles) await restoreArticle(article, true, false);
+  for (const article of backup.drafts) await restoreArticle(article, false, true);
+  for (const handle of backup.following) {
+    const target = handle.replace(/^@/, "").trim();
+    if (target && target.toLowerCase() !== username.toLowerCase()) {
+      await followUser(username, target);
+    }
+  }
 }
 
 export async function getFollowingByUser(): Promise<Record<string, FollowingMap>> {
@@ -428,8 +487,8 @@ function dbToArticle(row: Record<string, unknown>): StoredArticle {
   };
 }
 
-function articleToDb(article: StoredArticle, includeArchive = true): Record<string, unknown> {
-  return {
+function articleToDb(article: StoredArticle): Record<string, unknown> {
+  const row: Record<string, unknown> = {
     id: article.id,
     title: article.title,
     body: article.body,
@@ -438,8 +497,9 @@ function articleToDb(article: StoredArticle, includeArchive = true): Record<stri
     author: article.author,
     avatar: article.avatar ?? "",
     owner_username: article.ownerUsername ?? "",
-    ...(includeArchive ? { archived: article.archived ?? false } : {}),
   };
+  if (article.archived !== undefined) row.archived = article.archived;
+  return row;
 }
 
 // ── Remembered email (kept in localStorage — not sensitive) ──────────────────
