@@ -337,32 +337,30 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       throw new Error("This sign-in does not match the VeriPress account linked to this email.");
     }
     const matchedAccount = { ...matched, authUserId: data.user.id };
-    const [, savedProfile, userFollowing, userDrafts, allArticles, allRegistered, allFollowingByUser, allFollowers] =
-      await Promise.all([
-        api.saveAccount(matchedAccount),
-        api.getProfileForUser(matchedAccount.username),
-        api.getFollowingForUser(matchedAccount.username),
-        api.getDrafts(matchedAccount.username),
-        api.getUserArticles(),
-        api.getRegisteredUsers(),
-        api.getFollowingByUser(),
-        api.getFollowerCounts(),
-      ]);
-
-    const nextProfile: UserProfile = savedProfile ?? {
-      ...BLANK_PROFILE,
-      username: matchedAccount.username,
-    };
-
     setAccount(matchedAccount);
-    setProfile(nextProfile);
+    setProfile({ ...BLANK_PROFILE, username: matchedAccount.username });
     setSignupNeedsConfirmation(false);
-    setFollowing(userFollowing);
-    setDrafts(userDrafts);
-    setPublishedArticles(allArticles);
-    setRegisteredUsers(allRegistered);
-    setFollowingByUser(allFollowingByUser);
-    setFollowers(allFollowers);
+    setFollowing({});
+    setDrafts([]);
+
+    void Promise.all([
+      api.saveAccount(matchedAccount),
+      api.getProfileForUser(matchedAccount.username),
+      api.getFollowingForUser(matchedAccount.username),
+      api.getDrafts(matchedAccount.username),
+    ])
+      .then(async ([, savedProfile, userFollowing, userDrafts]) => {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (session?.user.id !== data.user.id) return;
+
+        setProfile(savedProfile ?? { ...BLANK_PROFILE, username: matchedAccount.username });
+        setFollowing(userFollowing);
+        setDrafts(userDrafts);
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to load account data after sign-in.", error);
+      });
 
     return true;
   }, []);
