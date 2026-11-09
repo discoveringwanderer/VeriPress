@@ -757,7 +757,12 @@ function DataToolsScreen({ profile, publishedArticles, archivedArticles, drafts,
       setMessage("Backup download started. Check your browser's Downloads.");
     } catch (shareError) {
       if (shareError instanceof DOMException && shareError.name === "AbortError") return;
-      setError(shareError instanceof Error ? shareError.message : "Unable to save or share the backup file.");
+      try {
+        downloadFile(backupFile);
+        setMessage("Sharing was unavailable. Backup download started; check your browser's Downloads.");
+      } catch (downloadError) {
+        setError(downloadError instanceof Error ? downloadError.message : "Unable to save or share the backup file.");
+      }
     }
   }
 
