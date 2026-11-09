@@ -24,7 +24,7 @@ const AVATAR_SAM = "https://images.unsplash.com/photo-1494790108377-be9c29b29330
 type Screen =
   | "splash" | "onboarding" | "auth-options" | "sign-in" | "create-account"
   | "complete-profile" | "discover-people" | "signup-success"
-  | "home" | "discover" | "create-article" | "my-articles" | "profile"
+  | "home" | "discover" | "create-article" | "my-articles" | "published-articles" | "profile"
   | "edit-profile" | "article-detail" | "public-profile"
   | "popular-articles" | "top-writers" | "new-articles"
   | "following-list" | "followers-list" | "profile-articles" | "data-tools";
@@ -1169,8 +1169,8 @@ function DiscoverListScreen({ kind, onBack, onArticle, onAuthor, publishedArticl
   );
 }
 
-function MyArticlesScreen({ onNavigate, onArticle, userArticles, archivedArticles, drafts, onCreate, onEdit, onDelete, onArchive, onRestore }: { onNavigate: (s: Screen) => void; onArticle: (id: string) => void; userArticles: Article[]; archivedArticles: Article[]; drafts: Article[]; onCreate: () => void; onEdit: (article: Article, isDraft: boolean) => void; onDelete: (article: Article, isDraft: boolean) => void; onArchive: (article: Article) => void; onRestore: (id: string) => void }) {
-  const [tab, setTab] = useState<"draft" | "published" | "archived">("draft");
+function MyArticlesScreen({ onNavigate, onArticle, userArticles, archivedArticles, drafts, onCreate, onEdit, onDelete, onArchive, onRestore, initialTab = "draft" }: { onNavigate: (s: Screen) => void; onArticle: (id: string) => void; userArticles: Article[]; archivedArticles: Article[]; drafts: Article[]; onCreate: () => void; onEdit: (article: Article, isDraft: boolean) => void; onDelete: (article: Article, isDraft: boolean) => void; onArchive: (article: Article) => void; onRestore: (id: string) => void; initialTab?: "draft" | "published" | "archived" }) {
+  const [tab, setTab] = useState<"draft" | "published" | "archived">(initialTab);
   const [search, setSearch] = useState("");
   const term = search.trim().toLowerCase();
   const filterArticles = (articles: Article[]) => articles.filter((article) =>
@@ -2040,6 +2040,8 @@ function AppContent() {
         return <ProfileArticlesScreen articles={userArticles} onBack={goBack} onArticle={openArticle} />;
       case "my-articles":
         return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); goTo("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); goTo("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} onArchive={handleArchiveArticle} onRestore={handleRestoreArticle} />;
+      case "published-articles":
+        return <MyArticlesScreen onNavigate={replace} onArticle={openArticle} userArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} onCreate={() => { setEditingArticle(null); goTo("create-article"); }} onEdit={(article, isDraft) => { setEditingArticle({ article, isDraft }); goTo("create-article"); }} onDelete={(article, isDraft) => setDeletingArticle({ article, isDraft })} onArchive={handleArchiveArticle} onRestore={handleRestoreArticle} initialTab="published" />;
       case "profile":
         return <ProfileScreen onNavigate={replace} onViewArticles={() => goTo("profile-articles")} onEdit={() => goTo("edit-profile")} onEditArticle={article => { setEditingArticle({ article, isDraft: false }); goTo("create-article"); }} onDeleteArticle={article => setDeletingArticle({ article, isDraft: false })} userArticles={userArticles} onLogout={handleLogout} following={following} followers={followers} profile={profile} registeredUsers={registeredUsers} onViewProfile={person => openPublicProfile(person.handle)} onViewConnections={type => goTo(type === "articles" ? "profile-articles" : type === "following" ? "following-list" : "followers-list")} onDataTools={() => goTo("data-tools")} />;
       case "edit-profile":
@@ -2047,7 +2049,7 @@ function AppContent() {
       case "data-tools":
         return <DataToolsScreen profile={profile} publishedArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} followingCount={Object.values(following).filter(Boolean).length} followerCount={followers[`@${profile.username}`.toLowerCase()] ?? 0} onBack={goBack} onCreateBackup={createBackup} onRestoreBackup={restoreBackup} />;
       case "create-article":
-        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); goBack(); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={(article, id) => { void publishArticle(article, id); setEditingArticle(null); goBack(); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); goBack(); }} />;
+        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); goBack(); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={(article, id) => { void publishArticle(article, id); setEditingArticle(null); replace("published-articles"); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); goBack(); }} />;
       case "article-detail":
         {
           const article = [...publishedArticles, ...ARTICLES].find(item => item.id === articleId) ?? ARTICLES[1];
