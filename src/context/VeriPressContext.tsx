@@ -103,6 +103,9 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     async function init() {
       setLoading(true);
       try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+
         const [allArticles, allRegistered, allFollowingByUser, allFollowers] = await Promise.all([
           api.getUserArticles(),
           api.getRegisteredUsers(),
@@ -114,8 +117,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
         setFollowingByUser(allFollowingByUser);
         setFollowers(allFollowers);
 
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
         if (session?.user) {
           const email = session.user.email;
           if (!email) throw new Error("The signed-in account does not have an email address.");
