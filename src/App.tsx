@@ -88,6 +88,7 @@ function BackArrow({ onPress }: { onPress: () => void }) {
 function PrimaryButton({ label, onClick, disabled = false }: { label: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className="w-full py-4 rounded-full text-white font-semibold text-base transition-opacity"
@@ -1607,7 +1608,7 @@ function EditProfileScreen({ profile, account, onBack, onSave }: { profile: User
   );
 }
 
-function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSaveDraft, onDelete }: { article?: Article; isDraft?: boolean; onBack: () => void; onPublish: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => Promise<void>; onSaveDraft: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => Promise<void>; onDelete: () => Promise<void> }) {
+function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSaveDraft, onDelete }: { article?: Article; isDraft?: boolean; onBack: () => void; onPublish: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => Promise<void> | void; onSaveDraft: (article: Omit<Article, "id" | "author" | "avatar" | "time">, id?: string) => Promise<void>; onDelete: () => Promise<void> }) {
   const [title, setTitle] = useState(article?.title ?? "");
   const [body, setBody] = useState(article?.body ?? "");
   const [coverImage, setCoverImage] = useState<string | null>(article?.image ?? null);
@@ -1637,7 +1638,7 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
   }
 
   async function closeEditor() {
-    if (filled && !draftSaved && !(await saveDraft())) return;
+    if (filled && !draftSaved) void saveDraft();
     onBack();
   }
 
@@ -1670,8 +1671,8 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
   return (
     <div className="flex flex-col h-full bg-white relative">
       <StatusBar />
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
-        <button onClick={closeEditor} disabled={saving} className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-full disabled:opacity-50" aria-label="Close article editor">
+      <div className="relative z-10 flex shrink-0 items-center justify-between px-4 py-2 border-b border-gray-100">
+        <button type="button" onClick={closeEditor} className="relative z-10 w-8 h-8 flex items-center justify-center border border-gray-300 rounded-full" aria-label="Close article editor">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -1765,7 +1766,7 @@ function CreateArticleScreen({ article, isDraft = false, onBack, onPublish, onSa
       </div>
 
       {error && <p className="px-4 text-sm text-red-500 mb-2">{error}</p>}
-      <div className="px-4 pb-10 pt-2">
+      <div className="relative z-10 shrink-0 px-4 pb-10 pt-2">
         <PrimaryButton label={saving ? "Saving..." : "Publish"} onClick={publishArticle} disabled={!filled || saving} />
       </div>
 
@@ -2046,7 +2047,7 @@ function AppContent() {
       case "data-tools":
         return <DataToolsScreen profile={profile} publishedArticles={userArticles} archivedArticles={archivedArticles} drafts={drafts} followingCount={Object.values(following).filter(Boolean).length} followerCount={followers[`@${profile.username}`.toLowerCase()] ?? 0} onBack={goBack} onCreateBackup={createBackup} onRestoreBackup={restoreBackup} />;
       case "create-article":
-        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); goBack(); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={async (article, id) => { await publishArticle(article, id); setEditingArticle(null); goBack(); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); goBack(); }} />;
+        return <CreateArticleScreen article={editingArticle?.article} isDraft={editingArticle?.isDraft} onBack={() => { setEditingArticle(null); goBack(); }} onSaveDraft={(article, id) => editingArticle && !editingArticle.isDraft && id ? updatePublished(id, article) : saveDraft(article, id)} onPublish={(article, id) => { void publishArticle(article, id); setEditingArticle(null); goBack(); }} onDelete={async () => { if (editingArticle) await (editingArticle.isDraft ? deleteDraft : deletePublished)(editingArticle.article.id); setEditingArticle(null); goBack(); }} />;
       case "article-detail":
         {
           const article = [...publishedArticles, ...ARTICLES].find(item => item.id === articleId) ?? ARTICLES[1];
