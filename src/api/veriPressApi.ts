@@ -258,10 +258,15 @@ export async function deleteArticle(id: string): Promise<void> {
 export function subscribeToSocialUpdates(onChange: () => void): () => void {
   const channel = supabase
     .channel("veripress-social-updates")
+    .on("postgres_changes", { event: "*", schema: "public", table: "accounts" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "articles" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "following" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, onChange)
-    .subscribe();
+    .subscribe((status, error) => {
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.error("VeriPress realtime updates are unavailable.", error ?? status);
+      }
+    });
 
   return () => {
     void supabase.removeChannel(channel);

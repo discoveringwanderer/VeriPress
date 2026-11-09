@@ -106,37 +106,43 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
 
-        const [allArticles, allRegistered, allFollowingByUser, allFollowers] = await Promise.all([
+        const email = session?.user?.email;
+        const globalDataPromise = Promise.all([
           api.getUserArticles(),
           api.getRegisteredUsers(),
           api.getFollowingByUser(),
           api.getFollowerCounts(),
         ]);
+        const accountPromise = session?.user
+          ? email
+            ? api.getAccountByAuthUserId(session.user.id).then(
+                (account) => account ?? api.getAccountByIdentifier(email)
+              )
+            : Promise.reject(new Error("The signed-in account does not have an email address."))
+          : Promise.resolve(null);
+        const [[allArticles, allRegistered, allFollowingByUser, allFollowers], acc] =
+          await Promise.all([globalDataPromise, accountPromise]);
         setPublishedArticles(allArticles);
         setRegisteredUsers(allRegistered);
         setFollowingByUser(allFollowingByUser);
         setFollowers(allFollowers);
 
         if (session?.user) {
-          const email = session.user.email;
-          if (!email) throw new Error("The signed-in account does not have an email address.");
-          const acc = await api.getAccountByAuthUserId(session.user.id)
-            ?? await api.getAccountByIdentifier(email);
           if (!acc) throw new Error("No VeriPress profile is linked to this signed-in account.");
           if (acc.authUserId && acc.authUserId !== session.user.id) {
             await supabase.auth.signOut();
             throw new Error("This sign-in does not match the VeriPress account linked to this email.");
           }
-          if (acc.authUserId !== session.user.id) {
-            await api.saveAccount({ ...acc, authUserId: session.user.id });
-          }
-          const savedProfile = await api.getProfileForUser(acc.username);
-          const restoredProfile = savedProfile ?? { ...BLANK_PROFILE, username: acc.username };
-          const [userFollowing, userDrafts] = await Promise.all([
+          const [savedProfile, userFollowing, userDrafts, userArchivedArticles] = await Promise.all([
+            api.getProfileForUser(acc.username),
             api.getFollowingForUser(acc.username),
             api.getDrafts(acc.username),
+            api.getArchivedArticles(acc.username),
+            acc.authUserId !== session.user.id
+              ? api.saveAccount({ ...acc, authUserId: session.user.id })
+              : Promise.resolve(),
           ]);
-          const userArchivedArticles = await api.getArchivedArticles(acc.username);
+          const restoredProfile = savedProfile ?? { ...BLANK_PROFILE, username: acc.username };
           setAccount({ ...acc, authUserId: session.user.id });
           setProfile(restoredProfile);
           setFollowing(userFollowing);

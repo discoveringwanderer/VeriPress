@@ -34,6 +34,12 @@ public reads only to published articles. The migration replaces existing
 `articles` row-level security policies, so review it first if your project has
 custom article policies.
 
+For near-real-time updates across devices, also run
+[`20261111010000_enable_realtime_updates.sql`](./migrations/20261111010000_enable_realtime_updates.sql)
+in the Supabase SQL Editor. It adds the `accounts`, `articles`, `following`,
+and `profiles` tables to Supabase Realtime's publication; without this setup,
+the app can only discover changes during its periodic refresh.
+
 Signed-in users can manage their own drafts, published articles, and archived
 articles from **My Articles**. The **Backup & Reports** page exports a JSON
 backup of the user's own profile, articles, drafts, archived articles, and
