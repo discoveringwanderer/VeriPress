@@ -34,6 +34,12 @@ public reads only to published articles. The migration replaces existing
 `articles` row-level security policies, so review it first if your project has
 custom article policies.
 
+After the archiving migration, run
+[`20261112010000_articles_published_feed_index.sql`](./migrations/20261112010000_articles_published_feed_index.sql)
+in the Supabase SQL Editor. It adds an index for the published-article feed
+query so Supabase can filter and sort published articles without scanning and
+sorting archived rows.
+
 For near-real-time updates across devices, also run
 [`20261111010000_enable_realtime_updates.sql`](./migrations/20261111010000_enable_realtime_updates.sql)
 in the Supabase SQL Editor. It adds the `accounts`, `articles`, `following`,

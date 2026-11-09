@@ -214,9 +214,10 @@ export async function getUserArticles(): Promise<StoredArticle[]> {
   const { data, error } = await supabase
     .from("articles")
     .select("*")
+    .eq("archived", false)
     .order("created_at", { ascending: false });
   throwOnSupabaseError(error);
-  return (data ?? []).map(dbToArticle).filter((article) => !article.archived);
+  return (data ?? []).map(dbToArticle);
 }
 
 export async function getArchivedArticles(username: string): Promise<StoredArticle[]> {
