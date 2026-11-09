@@ -72,6 +72,29 @@ export async function getAccounts(): Promise<Account[]> {
   }));
 }
 
+export async function getAccountsForRegistration(username: string, email: string): Promise<Account[]> {
+  const [usernameResult, emailResult] = await Promise.all([
+    supabase.from("accounts").select("username, email, auth_user_id").ilike("username", username).limit(1),
+    supabase.from("accounts").select("username, email, auth_user_id").ilike("email", email).limit(1),
+  ]);
+  if (isMissingAuthUserId(usernameResult.error) || isMissingAuthUserId(emailResult.error)) {
+    const [legacyUsername, legacyEmail] = await Promise.all([
+      supabase.from("accounts").select("username, email").ilike("username", username).limit(1),
+      supabase.from("accounts").select("username, email").ilike("email", email).limit(1),
+    ]);
+    throwOnSupabaseError(legacyUsername.error);
+    throwOnSupabaseError(legacyEmail.error);
+    return [...(legacyUsername.data ?? []), ...(legacyEmail.data ?? [])];
+  }
+  throwOnSupabaseError(usernameResult.error);
+  throwOnSupabaseError(emailResult.error);
+  return [...(usernameResult.data ?? []), ...(emailResult.data ?? [])].map((row) => ({
+    username: row.username,
+    email: row.email,
+    authUserId: row.auth_user_id,
+  }));
+}
+
 export async function saveAccount(account: Account): Promise<void> {
   const { error } = await supabase.from("accounts").upsert(
     {

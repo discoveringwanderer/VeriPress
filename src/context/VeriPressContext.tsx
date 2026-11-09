@@ -48,6 +48,8 @@ type VeriPressContextValue = {
   account: Account | null;
   loading: boolean;
   loadError: string | null;
+  syncError: string | null;
+  dismissSyncError: () => void;
   signupNeedsConfirmation: boolean;
   // actions
   publishArticle: (
@@ -96,7 +98,14 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
   const [followingByUser, setFollowingByUser] = useState<Record<string, FollowingMap>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [signupNeedsConfirmation, setSignupNeedsConfirmation] = useState(false);
+  const persistInBackground = useCallback((operation: string, persist: () => Promise<void>) => {
+    void persist().catch((error: unknown) => {
+      console.error(`Unable to sync ${operation}.`, error);
+      setSyncError(`${operation} is visible here but could not be saved to the server. Check your connection before refreshing.`);
+    });
+  }, []);
 
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -250,14 +259,14 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
   const createAccount = useCallback(async (
     nextAccount: { username: string; email: string; password: string }
   ): Promise<"created" | "username-exists" | "email-exists" | "account-exists"> => {
-    const existing = await api.getAccounts();
+    const email = nextAccount.email.trim().toLowerCase();
+    const existing = await api.getAccountsForRegistration(nextAccount.username, email);
     const sameUsername = existing.find((a) => a.username.toLowerCase() === nextAccount.username.toLowerCase());
-    const sameEmail = existing.find((a) => a.email.toLowerCase() === nextAccount.email.toLowerCase());
+    const sameEmail = existing.find((a) => a.email.toLowerCase() === email);
     if (sameUsername && sameUsername.email.toLowerCase() !== nextAccount.email.toLowerCase())
       return "username-exists";
     if (sameEmail && sameEmail.username.toLowerCase() !== nextAccount.username.toLowerCase())
       return "email-exists";
-    const email = nextAccount.email.trim().toLowerCase();
     let { data: authData, error } = await supabase.auth.signUp({
       email,
       password: nextAccount.password,
@@ -369,11 +378,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     const next: UserProfile = { ...profile, ...nextProfile };
     const usernameChanged =
       next.username.trim().toLowerCase() !== profile.username.trim().toLowerCase();
-    if (usernameChanged) {
-      const ok = await api.renameAccountUsername(profile.username, next.username);
-      if (!ok) throw new Error("That username is already in use.");
-    }
-
     // Update articles and drafts author info
     const updatedArticles = publishedArticles.map((item) =>
       item.ownerUsername?.toLowerCase() === profile.username.toLowerCase() ||
@@ -390,20 +394,25 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
     const updatedUserArticles = updatedArticles.filter(
       (article) => article.ownerUsername?.toLowerCase() === next.username.toLowerCase()
     );
-    await Promise.all([
-      api.saveProfileForUser(next.username, next),
-      api.saveArticles(updatedUserArticles),
-      api.saveDrafts(updatedDrafts),
-    ]);
-
     setProfile(next);
+    if (usernameChanged) {
+      setAccount((current) => current ? { ...current, username: next.username } : current);
+    }
     setPublishedArticles(updatedArticles);
     setDrafts(updatedDrafts);
 
-    void refreshGlobal().catch((error: unknown) => {
-      console.error("Unable to refresh community data after updating profile.", error);
+    persistInBackground("Saving your profile", async () => {
+      if (usernameChanged) {
+        const ok = await api.renameAccountUsername(profile.username, next.username);
+        if (!ok) throw new Error("That username is already in use.");
+      }
+      await Promise.all([
+        api.saveProfileForUser(next.username, next),
+        api.saveArticles(updatedUserArticles),
+        api.saveDrafts(updatedDrafts),
+      ]);
     });
-  }, [profile, author, publishedArticles, drafts, refreshGlobal]);
+  }, [profile, author, publishedArticles, drafts, persistInBackground]);
 
   const publishArticle = useCallback(async (
     articleData: Omit<StoredArticle, "id" | "author" | "avatar" | "time">,
@@ -417,15 +426,15 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       ownerUsername: profile.username,
       time: formatContentTime("Uploaded"),
     };
-    await Promise.all([
-      api.saveArticle(article),
-      ...(id ? [api.deleteDraft(id)] : []),
-    ]);
     if (id) {
       setDrafts((current) => current.filter((d) => d.id !== id));
     }
     setPublishedArticles((current) => [article, ...current.filter((a) => a.id !== article.id)]);
-  }, [author, avatar, profile.username]);
+    persistInBackground("Publishing the article", async () => {
+      await api.saveArticle(article);
+      if (id) await api.deleteDraft(id);
+    });
+  }, [author, avatar, profile.username, persistInBackground]);
 
   const saveDraftFn = useCallback(async (
     articleData: Omit<StoredArticle, "id" | "author" | "avatar" | "time">,
@@ -439,13 +448,15 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       ownerUsername: profile.username,
       time: formatContentTime("Drafted"),
     };
-    await api.saveDraft(draft);
     setDrafts((current) =>
       id
-        ? current.map((d) => (d.id === id ? draft : d))
+        ? current.some((existing) => existing.id === id)
+          ? current.map((existing) => (existing.id === id ? draft : existing))
+          : [draft, ...current]
         : [draft, ...current]
     );
-  }, [author, avatar, profile.username]);
+    persistInBackground("Saving the draft", () => api.saveDraft(draft));
+  }, [author, avatar, profile.username, persistInBackground]);
 
   const updateDraft = useCallback(async (
     id: string,
@@ -459,9 +470,9 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       ownerUsername: profile.username,
       time: formatContentTime("Drafted"),
     };
-    await api.saveDraft(draft);
     setDrafts((current) => current.map((d) => (d.id === id ? draft : d)));
-  }, [author, avatar, profile.username]);
+    persistInBackground("Updating the draft", () => api.saveDraft(draft));
+  }, [author, avatar, profile.username, persistInBackground]);
 
   const updatePublished = useCallback(async (
     id: string,
@@ -477,40 +488,40 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       archived: existing?.archived ?? articleData.archived ?? false,
       time: formatContentTime("Uploaded"),
     };
-    await api.saveArticle(article);
     setPublishedArticles((current) => current.map((a) => (a.id === id ? article : a)));
-  }, [author, avatar, profile.username, publishedArticles]);
+    persistInBackground("Updating the article", () => api.saveArticle(article));
+  }, [author, avatar, profile.username, publishedArticles, persistInBackground]);
 
   const deleteDraftFn = useCallback(async (id: string): Promise<void> => {
-    await api.deleteDraft(id);
     setDrafts((current) => current.filter((d) => d.id !== id));
-  }, []);
+    persistInBackground("Deleting the draft", () => api.deleteDraft(id));
+  }, [persistInBackground]);
 
   const deletePublished = useCallback(async (id: string): Promise<void> => {
-    await api.deleteArticle(id);
     setPublishedArticles((current) => current.filter((a) => a.id !== id));
     setArchivedArticles((current) => current.filter((a) => a.id !== id));
-  }, []);
+    persistInBackground("Deleting the article", () => api.deleteArticle(id));
+  }, [persistInBackground]);
 
   const archiveArticle = useCallback(async (id: string): Promise<void> => {
     if (!profile.username) throw new Error("Sign in to archive your articles.");
-    await api.setArticleArchived(id, profile.username, true);
     const article = publishedArticles.find((item) => item.id === id);
     if (!article) return;
     const archived = { ...article, archived: true };
     setPublishedArticles((current) => current.filter((item) => item.id !== id));
     setArchivedArticles((current) => [archived, ...current.filter((item) => item.id !== id)]);
-  }, [profile.username, publishedArticles]);
+    persistInBackground("Archiving the article", () => api.setArticleArchived(id, profile.username, true));
+  }, [profile.username, publishedArticles, persistInBackground]);
 
   const restoreArticle = useCallback(async (id: string): Promise<void> => {
     if (!profile.username) throw new Error("Sign in to restore your articles.");
-    await api.setArticleArchived(id, profile.username, false);
     const article = archivedArticles.find((item) => item.id === id);
     if (!article) return;
     const restored = { ...article, archived: false };
     setArchivedArticles((current) => current.filter((item) => item.id !== id));
     setPublishedArticles((current) => [restored, ...current.filter((item) => item.id !== id)]);
-  }, [profile.username, archivedArticles]);
+    persistInBackground("Restoring the article", () => api.setArticleArchived(id, profile.username, false));
+  }, [profile.username, archivedArticles, persistInBackground]);
 
   const createBackup = useCallback(async (): Promise<VeriPressBackup> => {
     if (!profile.username) throw new Error("Sign in to create a backup.");
@@ -597,6 +608,8 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
         account,
         loading,
         loadError,
+        syncError,
+        dismissSyncError: () => setSyncError(null),
         signupNeedsConfirmation,
         publishArticle,
         saveDraft: saveDraftFn,

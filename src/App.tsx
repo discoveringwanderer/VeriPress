@@ -1845,7 +1845,7 @@ function AppContent() {
   const [accountDraft, setAccountDraft] = useState<AccountDraft>({ username: "", email: "", password: "", confirm: "" });
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({ name: "", phone: "", gender: "", dob: "", avatar: null, description: "" });
   const [actionError, setActionError] = useState("");
-  const { userArticles, publishedArticles, archivedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, archiveArticle, restoreArticle, createBackup, restoreBackup, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading, loadError, signupNeedsConfirmation, account } = useVeriPress();
+  const { userArticles, publishedArticles, archivedArticles, drafts, following, followingCounts, followerHandles, followingByUser, followersByUser, followers, publishArticle, saveDraft, updatePublished, deleteDraft, deletePublished, archiveArticle, restoreArticle, createBackup, restoreBackup, toggleFollowing, logout, createAccount, signIn, completeProfile, profile, registeredUsers, loading, loadError, syncError, dismissSyncError, signupNeedsConfirmation, account } = useVeriPress();
   const selfHandle = profile.username ? `@${profile.username}` : "";
   function handleLogout(): Promise<void> {
     return logout().then(() => {
@@ -2069,6 +2069,12 @@ function AppContent() {
           <div role="alert" className="absolute inset-x-3 top-10 z-40 flex items-start justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 shadow">
             <span>{actionError}</span>
             <button type="button" onClick={() => setActionError("")} aria-label="Dismiss error">×</button>
+          </div>
+        )}
+        {syncError && (
+          <div role="alert" className="absolute inset-x-3 top-10 z-40 flex items-start justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 shadow">
+            <span>{syncError}</span>
+            <button type="button" onClick={dismissSyncError} aria-label="Dismiss sync error">×</button>
           </div>
         )}
         {deletingArticle && (
