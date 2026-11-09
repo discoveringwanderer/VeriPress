@@ -243,6 +243,17 @@ export async function getUserArticles(): Promise<StoredArticle[]> {
   return (data ?? []).map(dbToArticle);
 }
 
+async function getPublishedArticlesForUser(username: string): Promise<StoredArticle[]> {
+  const { data, error } = await supabase
+    .from("articles")
+    .select("*")
+    .ilike("owner_username", username)
+    .eq("archived", false)
+    .order("created_at", { ascending: false });
+  throwOnSupabaseError(error);
+  return (data ?? []).map(dbToArticle);
+}
+
 export async function getArchivedArticles(username: string): Promise<StoredArticle[]> {
   if (!username) return [];
   const { data, error } = await supabase
@@ -353,7 +364,7 @@ export async function getFollowingForUser(username: string): Promise<FollowingMa
 export async function createUserBackup(username: string): Promise<VeriPressBackup> {
   const [profile, articles, archivedArticles, drafts, following] = await Promise.all([
     getProfileForUser(username),
-    getUserArticles(),
+    getPublishedArticlesForUser(username),
     getArchivedArticles(username),
     getDrafts(username),
     getFollowingForUser(username),
@@ -365,9 +376,7 @@ export async function createUserBackup(username: string): Promise<VeriPressBacku
     exportedAt: new Date().toISOString(),
     username,
     profile,
-    publishedArticles: articles.filter(
-      (article) => article.ownerUsername?.toLowerCase() === username.toLowerCase()
-    ),
+    publishedArticles: articles,
     archivedArticles,
     drafts,
     following: Object.keys(following).filter((handle) => following[handle]),
