@@ -100,6 +100,7 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [signupNeedsConfirmation, setSignupNeedsConfirmation] = useState(false);
+  const communityLoadInProgress = useRef(false);
   const persistInBackground = useCallback((operation: string, persist: () => Promise<void>) => {
     void persist().catch((error: unknown) => {
       console.error(`Unable to sync ${operation}.`, error);
@@ -109,63 +110,91 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
 
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
+    let active = true;
+    const loadCommunityData = async () => {
+      const results = await Promise.allSettled([
+        api.getUserArticles(),
+        api.getRegisteredUsers(),
+        api.getFollowingByUser(),
+        api.getFollowerCounts(),
+      ]);
+      if (!active) return;
+      const [articles, users, followingByUser, followers] = results;
+      if (articles.status === "fulfilled") setPublishedArticles(articles.value);
+      if (users.status === "fulfilled") setRegisteredUsers(users.value);
+      if (followingByUser.status === "fulfilled") setFollowingByUser(followingByUser.value);
+      if (followers.status === "fulfilled") setFollowers(followers.value);
+      const failedRequests = results.filter((result) => result.status === "rejected");
+      if (failedRequests.length) {
+        failedRequests.forEach((result) => {
+          if (result.status === "rejected") console.error("Unable to load part of community data.", result.reason);
+        });
+        setSyncError("Some community data could not be loaded. Check your connection and try again.");
+      }
+    };
+
     async function init() {
       setLoading(true);
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
 
-        const email = session?.user?.email;
-        const globalDataPromise = Promise.all([
-          api.getUserArticles(),
-          api.getRegisteredUsers(),
-          api.getFollowingByUser(),
-          api.getFollowerCounts(),
-        ]);
-        const accountPromise = session?.user
-          ? email
-            ? api.getAccountByAuthUserId(session.user.id).then(
-                (account) => account ?? api.getAccountByIdentifier(email)
-              )
-            : Promise.reject(new Error("The signed-in account does not have an email address."))
-          : Promise.resolve(null);
-        const [[allArticles, allRegistered, allFollowingByUser, allFollowers], acc] =
-          await Promise.all([globalDataPromise, accountPromise]);
-        setPublishedArticles(allArticles);
-        setRegisteredUsers(allRegistered);
-        setFollowingByUser(allFollowingByUser);
-        setFollowers(allFollowers);
+        communityLoadInProgress.current = true;
+        void loadCommunityData().finally(() => {
+          communityLoadInProgress.current = false;
+        });
 
+        const email = session?.user?.email;
         if (session?.user) {
+          if (!email) throw new Error("The signed-in account does not have an email address.");
+          const acc = await api.getAccountByAuthUserId(session.user.id)
+            ?? await api.getAccountByIdentifier(email);
           if (!acc) throw new Error("No VeriPress profile is linked to this signed-in account.");
           if (acc.authUserId && acc.authUserId !== session.user.id) {
             await supabase.auth.signOut();
             throw new Error("This sign-in does not match the VeriPress account linked to this email.");
           }
-          const [savedProfile, userFollowing, userDrafts, userArchivedArticles] = await Promise.all([
+          if (!active) return;
+          setAccount({ ...acc, authUserId: session.user.id });
+          setProfile({ ...BLANK_PROFILE, username: acc.username });
+          setLoading(false);
+
+          void Promise.all([
+            acc.authUserId !== session.user.id
+              ? api.saveAccount({ ...acc, authUserId: session.user.id })
+              : Promise.resolve(),
             api.getProfileForUser(acc.username),
             api.getFollowingForUser(acc.username),
             api.getDrafts(acc.username),
             api.getArchivedArticles(acc.username),
-            acc.authUserId !== session.user.id
-              ? api.saveAccount({ ...acc, authUserId: session.user.id })
-              : Promise.resolve(),
-          ]);
-          const restoredProfile = savedProfile ?? { ...BLANK_PROFILE, username: acc.username };
-          setAccount({ ...acc, authUserId: session.user.id });
-          setProfile(restoredProfile);
-          setFollowing(userFollowing);
-          setDrafts(userDrafts);
-          setArchivedArticles(userArchivedArticles);
+          ]).then(([, savedProfile, userFollowing, userDrafts, userArchivedArticles]) => {
+            if (!active) return;
+            return supabase.auth.getSession().then(({ data, error }) => {
+              if (error) throw error;
+              if (!active || data.session?.user.id !== session.user.id) return;
+              setProfile(savedProfile ?? { ...BLANK_PROFILE, username: acc.username });
+              setFollowing(userFollowing);
+              setDrafts(userDrafts);
+              setArchivedArticles(userArchivedArticles);
+            });
+          }).catch((error: unknown) => {
+            console.error("Unable to load account data.", error);
+            if (active) {
+              setSyncError("Some account data could not be loaded. Check your connection and try again.");
+            }
+          });
         }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }
     void init().catch((error: unknown) => {
       console.error("Unable to load VeriPress data.", error);
-      setLoadError("Unable to load VeriPress data. Check your connection and Supabase setup, then try again.");
+      if (active) setLoadError("Unable to verify your sign-in. Check your connection and Supabase setup, then try again.");
     });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // ── Derived state ────────────────────────────────────────────────────────────
@@ -212,20 +241,36 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
 
   // ── Refresh helpers ──────────────────────────────────────────────────────────
   const refreshGlobal = useCallback(async () => {
-    const [allArticles, allRegistered, allFollowingByUser, allFollowers, activeFollowing, userArchivedArticles] = await Promise.all([
-      api.getUserArticles(),
-      api.getRegisteredUsers(),
-      api.getFollowingByUser(),
-      api.getFollowerCounts(),
-      profile.username ? api.getFollowingForUser(profile.username) : Promise.resolve(null),
-      profile.username ? api.getArchivedArticles(profile.username) : Promise.resolve(null),
-    ]);
-    setPublishedArticles(allArticles);
-    setRegisteredUsers(allRegistered);
-    setFollowingByUser(allFollowingByUser);
-    setFollowers(allFollowers);
-    if (activeFollowing) setFollowing(activeFollowing);
-    if (userArchivedArticles) setArchivedArticles(userArchivedArticles);
+    if (communityLoadInProgress.current) return;
+    communityLoadInProgress.current = true;
+    try {
+      const results = await Promise.allSettled([
+        api.getUserArticles(),
+        api.getRegisteredUsers(),
+        api.getFollowingByUser(),
+        api.getFollowerCounts(),
+        profile.username ? api.getFollowingForUser(profile.username) : Promise.resolve(null),
+        profile.username ? api.getArchivedArticles(profile.username) : Promise.resolve(null),
+      ]);
+      const [articles, users, followingByUser, followers, activeFollowing, archivedArticles] = results;
+      if (articles.status === "fulfilled") setPublishedArticles(articles.value);
+      if (users.status === "fulfilled") setRegisteredUsers(users.value);
+      if (followingByUser.status === "fulfilled") setFollowingByUser(followingByUser.value);
+      if (followers.status === "fulfilled") setFollowers(followers.value);
+      if (activeFollowing.status === "fulfilled" && activeFollowing.value) setFollowing(activeFollowing.value);
+      if (archivedArticles.status === "fulfilled" && archivedArticles.value) {
+        setArchivedArticles(archivedArticles.value);
+      }
+      const failures = results.filter((result) => result.status === "rejected");
+      failures.forEach((result) => {
+        if (result.status === "rejected") console.error("Unable to refresh part of community data.", result.reason);
+      });
+      if (failures.length) {
+        setSyncError("Some community data could not be refreshed. Check your connection and try again.");
+      }
+    } finally {
+      communityLoadInProgress.current = false;
+    }
   }, [profile.username]);
 
   useEffect(() => {
