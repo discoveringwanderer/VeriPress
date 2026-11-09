@@ -246,7 +246,14 @@ export async function setArticleArchived(id: string, username: string, archived:
 }
 
 export async function saveArticle(article: StoredArticle): Promise<void> {
-  const { error } = await supabase.from("articles").upsert(articleToDb(article), { onConflict: "id" });
+  await saveArticles([article]);
+}
+
+export async function saveArticles(articles: StoredArticle[]): Promise<void> {
+  if (!articles.length) return;
+  const { error } = await supabase
+    .from("articles")
+    .upsert(articles.map(articleToDb), { onConflict: "id" });
   throwOnSupabaseError(error);
 }
 
@@ -287,7 +294,14 @@ export async function getDrafts(ownerUsername: string): Promise<StoredArticle[]>
 }
 
 export async function saveDraft(article: StoredArticle): Promise<void> {
-  const { error } = await supabase.from("drafts").upsert(articleToDb(article), { onConflict: "id" });
+  await saveDrafts([article]);
+}
+
+export async function saveDrafts(articles: StoredArticle[]): Promise<void> {
+  if (!articles.length) return;
+  const { error } = await supabase
+    .from("drafts")
+    .upsert(articles.map(articleToDb), { onConflict: "id" });
   throwOnSupabaseError(error);
 }
 

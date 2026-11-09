@@ -203,21 +203,20 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
 
   // ── Refresh helpers ──────────────────────────────────────────────────────────
   const refreshGlobal = useCallback(async () => {
-    const [allArticles, allRegistered, allFollowingByUser, allFollowers, activeFollowing] = await Promise.all([
+    const [allArticles, allRegistered, allFollowingByUser, allFollowers, activeFollowing, userArchivedArticles] = await Promise.all([
       api.getUserArticles(),
       api.getRegisteredUsers(),
       api.getFollowingByUser(),
       api.getFollowerCounts(),
       profile.username ? api.getFollowingForUser(profile.username) : Promise.resolve(null),
+      profile.username ? api.getArchivedArticles(profile.username) : Promise.resolve(null),
     ]);
     setPublishedArticles(allArticles);
     setRegisteredUsers(allRegistered);
     setFollowingByUser(allFollowingByUser);
     setFollowers(allFollowers);
     if (activeFollowing) setFollowing(activeFollowing);
-    if (profile.username) {
-      setArchivedArticles(await api.getArchivedArticles(profile.username));
-    }
+    if (userArchivedArticles) setArchivedArticles(userArchivedArticles);
   }, [profile.username]);
 
   useEffect(() => {
@@ -313,7 +312,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       authUserId: authData.user.id,
     };
     await api.saveAccount(savedAccount);
-    await api.saveAccount(savedAccount);
     setAccount(savedAccount);
     setProfile({ ...BLANK_PROFILE, username: savedAccount.username });
     setSignupNeedsConfirmation(!authData.session);
@@ -339,10 +337,9 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       throw new Error("This sign-in does not match the VeriPress account linked to this email.");
     }
     const matchedAccount = { ...matched, authUserId: data.user.id };
-    await api.saveAccount(matchedAccount);
-
-    const [savedProfile, userFollowing, userDrafts, allArticles, allRegistered, allFollowingByUser, allFollowers] =
+    const [, savedProfile, userFollowing, userDrafts, allArticles, allRegistered, allFollowingByUser, allFollowers] =
       await Promise.all([
+        api.saveAccount(matchedAccount),
         api.getProfileForUser(matchedAccount.username),
         api.getFollowingForUser(matchedAccount.username),
         api.getDrafts(matchedAccount.username),
@@ -379,8 +376,6 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       if (!ok) throw new Error("That username is already in use.");
     }
 
-    await api.saveProfileForUser(next.username, next);
-
     // Update articles and drafts author info
     const updatedArticles = publishedArticles.map((item) =>
       item.ownerUsername?.toLowerCase() === profile.username.toLowerCase() ||
@@ -388,26 +383,28 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
         ? { ...item, author: next.name || next.username, avatar: next.avatar ?? "", ownerUsername: next.username }
         : item
     );
-    for (const a of updatedArticles.filter(
-      (a) => a.ownerUsername?.toLowerCase() === next.username.toLowerCase()
-    )) {
-      await api.saveArticle(a);
-    }
-
     const updatedDrafts = drafts.map((item) => ({
       ...item,
       author: next.name || next.username,
       avatar: next.avatar ?? "",
       ownerUsername: next.username,
     }));
-    for (const d of updatedDrafts) await api.saveDraft(d);
+    const updatedUserArticles = updatedArticles.filter(
+      (article) => article.ownerUsername?.toLowerCase() === next.username.toLowerCase()
+    );
+    await Promise.all([
+      api.saveProfileForUser(next.username, next),
+      api.saveArticles(updatedUserArticles),
+      api.saveDrafts(updatedDrafts),
+    ]);
 
     setProfile(next);
     setPublishedArticles(updatedArticles);
     setDrafts(updatedDrafts);
 
-    // Sync registered users
-    await refreshGlobal();
+    void refreshGlobal().catch((error: unknown) => {
+      console.error("Unable to refresh community data after updating profile.", error);
+    });
   }, [profile, author, publishedArticles, drafts, refreshGlobal]);
 
   const publishArticle = useCallback(async (
@@ -422,9 +419,11 @@ export function VeriPressProvider({ children }: { children: React.ReactNode }) {
       ownerUsername: profile.username,
       time: formatContentTime("Uploaded"),
     };
-    await api.saveArticle(article);
+    await Promise.all([
+      api.saveArticle(article),
+      ...(id ? [api.deleteDraft(id)] : []),
+    ]);
     if (id) {
-      await api.deleteDraft(id);
       setDrafts((current) => current.filter((d) => d.id !== id));
     }
     setPublishedArticles((current) => [article, ...current.filter((a) => a.id !== article.id)]);
