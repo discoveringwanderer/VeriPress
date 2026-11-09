@@ -383,7 +383,7 @@ export async function createUserBackup(username: string): Promise<VeriPressBacku
   };
 }
 
-export async function restoreUserBackup(username: string, backup: VeriPressBackup): Promise<void> {
+export async function restoreUserBackup(username: string, backup: VeriPressBackup): Promise<VeriPressBackup> {
   if (backup.format !== "veripress-backup" || backup.version !== 1) {
     throw new Error("This backup format is not supported.");
   }
@@ -393,39 +393,65 @@ export async function restoreUserBackup(username: string, backup: VeriPressBacku
   if (backup.profile.username.toLowerCase() !== username.toLowerCase()) {
     throw new Error("The backup profile does not match the signed-in user.");
   }
+  const articleGroups = [
+    { articles: backup.publishedArticles, archived: false, draft: false },
+    { articles: backup.archivedArticles, archived: true, draft: false },
+    { articles: backup.drafts, archived: false, draft: true },
+  ];
+  for (const { articles } of articleGroups) {
+    if (articles.some((article) =>
+      article.ownerUsername && article.ownerUsername.toLowerCase() !== username.toLowerCase()
+    )) {
+      throw new Error("The backup contains an article belonging to another user.");
+    }
+  }
 
   await saveProfileForUser(username, { ...backup.profile, username });
 
-  async function restoreArticle(article: StoredArticle, archived: boolean, draft: boolean): Promise<void> {
-    if (article.ownerUsername && article.ownerUsername.toLowerCase() !== username.toLowerCase()) {
-      throw new Error("The backup contains an article belonging to another user.");
+  const restoredGroups: StoredArticle[][] = [];
+  for (const { articles, archived, draft } of articleGroups) {
+    const restoredGroup: StoredArticle[] = [];
+    for (let offset = 0; offset < articles.length; offset += 10) {
+      const batch = articles.slice(offset, offset + 10);
+      const table = draft ? "drafts" : "articles";
+      const { data: existing, error: existingError } = await supabase
+        .from(table)
+        .select("id, owner_username")
+        .in("id", batch.map((article) => article.id));
+      throwOnSupabaseError(existingError);
+      const existingOwners = new Map(
+        (existing ?? []).map((row) => [row.id as string, row.owner_username as string | null])
+      );
+      const restoredArticles = batch.map((article) => ({
+        ...article,
+        id: existingOwners.get(article.id) &&
+          existingOwners.get(article.id)?.toLowerCase() !== username.toLowerCase()
+          ? `restored-${crypto.randomUUID()}`
+          : article.id,
+        ownerUsername: username,
+        archived: draft ? false : archived,
+      }));
+      if (draft) {
+        await saveDrafts(restoredArticles);
+      } else {
+        await saveArticles(restoredArticles);
+      }
+      restoredGroup.push(...restoredArticles);
     }
-    let id = article.id;
-    const table = draft ? "drafts" : "articles";
-    const { data: existing, error } = await supabase.from(table).select("owner_username").eq("id", id).limit(1);
-    throwOnSupabaseError(error);
-    if (existing?.[0] && existing[0].owner_username?.toLowerCase() !== username.toLowerCase()) {
-      id = `restored-${crypto.randomUUID()}`;
-    }
-    const restoredArticle = {
-      ...article,
-      id,
-      ownerUsername: username,
-      archived: draft ? false : archived,
-    };
-    if (draft) await saveDraft(restoredArticle);
-    else await saveArticle(restoredArticle);
+    restoredGroups.push(restoredGroup);
   }
-
-  for (const article of backup.publishedArticles) await restoreArticle(article, false, false);
-  for (const article of backup.archivedArticles) await restoreArticle(article, true, false);
-  for (const article of backup.drafts) await restoreArticle(article, false, true);
   for (const handle of backup.following) {
     const target = handle.replace(/^@/, "").trim();
     if (target && target.toLowerCase() !== username.toLowerCase()) {
       await followUser(username, target);
     }
   }
+  return {
+    ...backup,
+    publishedArticles: restoredGroups[0],
+    archivedArticles: restoredGroups[1],
+    drafts: restoredGroups[2],
+  };
 }
 
 export async function getFollowingByUser(): Promise<Record<string, FollowingMap>> {
